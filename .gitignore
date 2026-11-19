@@ -43,3 +43,5 @@ Thumbs.db
 # Archivos temporales
 *.tmp
 *.temp
+
+backups/

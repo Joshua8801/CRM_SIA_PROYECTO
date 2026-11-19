@@ -1,246 +1,177 @@
-# CRM de Cuentas Corrientes — Tema T3 (`CRM-ACADEMICO`)
+# CRM-ACADEMICO
 
-Prototipo académico funcional para la gestión integral de clientes, líneas de crédito, cuentas corrientes, alertas de exceso de crédito, seguimiento de interacciones y conciliación de saldos por período.
-
----
-
-## A. Presentación
-
-- **Problema que resuelve:** El control manual o disperso de cuentas corrientes de clientes genera inconsistencias en los saldos por cobrar, dificultad para detectar excesos sobre la línea de crédito asignada y falta de trazabilidad en las gestiones de cobranza.
-- **Objetivo del sistema:** Proveer una aplicación web cliente-servidor con integridad relacional en PostgreSQL donde los saldos se calculen directamente a partir de movimientos confirmados y aplicaciones de pago, evitando redundancia y errores de sincronización.
-- **Alcance funcional:** Gestión completa de cartera de clientes (personas naturales y jurídicas), operación de cuentas corrientes en línea, emisión imprimible de estados de cuenta, alertas automáticas de crédito, bitácora de interacciones y conciliación frente a cálculos manuales.
+Sistema CRM académico para la gestión de clientes, líneas de crédito, cuentas corrientes, alertas, interacciones y conciliación de saldos, desarrollado con React, Vite, Node.js, Express, TypeScript y PostgreSQL 17 mediante Docker Compose.
 
 ---
 
-## B. Funcionalidades Implementadas
+## 1. Instalación Rápida (Escenario A: Instalación Nueva Automática)
 
-1. **Registro de clientes naturales y jurídicos:** Validación por tipo de persona (`NATURAL` con `nombre_completo`, `JURIDICA` con `razon_social`) y unicidad por tipo y número de documento.
-2. **Segmentación y línea de crédito:** Clasificación en segmentos (`CORPORATIVO`, `PYME`, `MINORISTA`) con asignación y actualización de línea de crédito.
-3. **Gestión de cuentas corrientes:** Creación automática de cuenta corriente al registrar un cliente y consulta de saldos calculados en línea.
-4. **Registro de cargos y abonos:** Registro transaccional de facturas, notas de débito, pagos, notas de crédito y ajustes, además de anulación controlada.
-5. **Aplicación parcial y completa de pagos:** Vinculación de abonos contra cargos pendientes mediante `trs_aplicacion_pago` con bloqueos `FOR UPDATE` y validación estricta de saldos disponibles.
-6. **Cálculo de saldos sin redundancia:** Saldos actuales, totales de cargos/abonos y saldos pendientes calculados mediante vistas y funciones SQL (`vw_cuenta_saldo`, `vw_movimiento_saldo`, `fn_resumen_periodo_cuenta`).
-7. **Estado de cuenta por período:** Reporte cronológico con saldo inicial, cargos, abonos, saldo final y soporte de impresión (`@media print`).
-8. **Alertas de crédito:** Generación y resolución automática de alertas `EXCESO_LINEA` y `PROXIMO_LIMITE` (umbral del 85 % de la línea de crédito) sin duplicados activos.
-9. **Historial de interacciones:** Bitácora por cliente con canal de contacto, resultado y fecha de próximo seguimiento.
-10. **Conciliación de saldos (producto diferenciador):** Comparación lado a lado entre el cálculo automático del sistema y el cálculo manual ingresado para un período, validando coherencia matemática (`Saldo final = Saldo inicial + Cargos - Abonos`) y registrando diferencias.
-11. **Auditoría inmutable:** Registro histórico en `trs_auditoria` con `JSONB` (`datos_anteriores`, `datos_nuevos`) protegido contra modificaciones o eliminaciones mediante trigger.
-12. **Dashboard ejecutivo:** Indicadores clave de cartera, resumen por segmento, alertas activas recientes y próximos seguimientos.
+Cuando un integrante nuevo parte de un volumen vacío, PostgreSQL 17 ejecuta automáticamente los scripts `database/01_schema.sql`, `database/02_indexes.sql` y `database/03_seed.sql` mediante `/docker-entrypoint-initdb.d/` la primera vez que se inicia el contenedor.
 
----
+> Si el volumen `crm-cuentas-corrientes_postgres_data` ya contiene una base de datos inicializada, PostgreSQL **omite** `/docker-entrypoint-initdb.d/` y conserva intactos todos los datos existentes.
 
-## C. Tecnologías
+### 1.1. Requisitos previos
+- **Git**
+- **Docker Desktop** con **Docker Compose v2**
 
-| Capa | Tecnologías y versiones reales (`package.json`) |
-| :--- | :--- |
-| **Frontend** | React `^18.3.1`, TypeScript `^5.6.3`, Vite `^6.0.1`, Tailwind CSS `^4.0.0`, React Router `^6.28.0`, Axios `^1.7.7`, Lucide React `^0.460.0` |
-| **Backend** | Node.js, Express `^4.21.1`, TypeScript `^5.6.3`, `pg` `^8.13.1`, `jsonwebtoken` `^9.0.2`, `bcrypt` `^5.1.1`, `cors` `^2.8.5`, `dotenv` `^16.4.5` |
-| **Base de datos** | PostgreSQL 17+ (esquema SQL puro, sin ORM) |
-
----
-
-## D. Arquitectura
-
-El proyecto sigue una arquitectura cliente-servidor modular dividida en cuatro directorios principales:
-
-- **`frontend/`**: Interfaz de usuario SPA en React + TypeScript. Se comunica exclusivamente con el backend mediante peticiones HTTP/JSON usando Axios (`VITE_API_URL`) e interceptor de token Bearer JWT.
-- **`backend/`**: API REST en Express (`/api/v1/*`). Es el único componente que se conecta directamente a PostgreSQL mediante `pg.Pool` (`DATABASE_URL`), gestiona autenticación JWT, reglas de negocio, transacciones SQL y auditoría.
-- **`database/`**: Scripts SQL de definición de tablas, restricciones, triggers, vistas, funciones, índices y datos semilla.
-- **`docs/`**: Diccionario de datos, diagrama ER y guía técnica complementaria.
-
----
-
-## E. Requisitos Previos
-
-- **Node.js** `>= 20` LTS y **npm** (verificado en entorno con Node `v24.18.0` y npm `11.16.0`).
-- **PostgreSQL 17+** (instancia local o servidor universitario) con cliente `psql` disponible.
-- **Git** para clonar y colaborar en el repositorio.
-
----
-
-## F. Instalación desde Cero (PowerShell)
-
-1. **Clonar el repositorio:**
-   ```powershell
-   git clone <URL_DEL_REPOSITORIO>
-   cd CRM-ACADEMICO
-   ```
-
-2. **Instalar dependencias del backend:**
-   ```powershell
-   npm install --prefix backend
-   ```
-
-3. **Instalar dependencias del frontend:**
-   ```powershell
-   npm install --prefix frontend
-   ```
-
-4. **Crear y configurar los archivos `.env`:**
-   ```powershell
-   Copy-Item backend\.env.example backend\.env
-   Copy-Item frontend\.env.example frontend\.env
-   ```
-   Edita `backend/.env` y configura tu `DATABASE_URL` y un `JWT_SECRET` propio:
-   ```env
-   PORT=4000
-   DATABASE_URL=postgresql://crm_admin:TU_PASSWORD@localhost:5433/crm_academico
-   DB_SSL=false
-   JWT_SECRET=genera_un_secreto_seguro_local
-   JWT_EXPIRES_IN=8h
-   CORS_ORIGIN=http://localhost:5173
-   ```
-   Verifica `frontend/.env`:
-   ```env
-   VITE_API_URL=http://localhost:4000/api/v1
-   ```
-
-5. **Crear una base de datos PostgreSQL independiente:**
-   ```powershell
-   psql -h localhost -p 5433 -U postgres -c "CREATE DATABASE crm_academico;"
-   ```
-   *(Asegúrate de usar el usuario `crm_admin` con permisos sobre `crm_academico` o tu usuario local configurado en `backend/.env`.)*
-
-6. **Ejecutar los scripts SQL en el orden correcto:**
-   ```powershell
-   psql -h localhost -p 5433 -U crm_admin -d crm_academico -f database\01_schema.sql
-   psql -h localhost -p 5433 -U crm_admin -d crm_academico -f database\02_indexes.sql
-   psql -h localhost -p 5433 -U crm_admin -d crm_academico -f database\03_seed.sql
-   ```
-
-7. **Iniciar el backend (en una terminal):**
-   ```powershell
-   npm run dev --prefix backend
-   ```
-
-8. **Iniciar el frontend (en otra terminal):**
-   ```powershell
-   npm run dev --prefix frontend
-   ```
-
-9. **Acceder desde el navegador:**
-   Abrir `http://localhost:5173`.
-
----
-
-## G. Base de Datos
-
-- **Motor:** PostgreSQL 17+.
-- **Base de datos de referencia:** `crm_academico`.
-- **15 tablas exactas:**
-  - **Catálogos (6):** `tipo_documento`, `tipo_moneda`, `cat_segmento_cliente`, `tipo_movimiento_cuenta`, `tipo_interaccion`, `tipo_estado_movimiento`.
-  - **Maestras (3):** `mae_usuario`, `mae_cliente`, `mae_cuenta_corriente`.
-  - **Transaccionales (6):** `trs_movimiento_cuenta`, `trs_aplicacion_pago`, `trs_alerta_credito`, `trs_interaccion_cliente`, `trs_conciliacion_cuenta`, `trs_auditoria`.
-- **Orden y función de los scripts (`database/`):**
-  1. `01_schema.sql`: Crea las 15 tablas, restricciones `CHECK`/`UNIQUE`, trigger de inmutabilidad en `trs_auditoria`, vistas `vw_movimiento_saldo` y `vw_cuenta_saldo`, y la función `fn_resumen_periodo_cuenta`.
-  2. `02_indexes.sql`: Crea los índices de rendimiento e índice único parcial `uq_trs_alerta_activa_unica`.
-  3. `03_seed.sql`: Inserta catálogos base, usuarios de demostración y datos ficticios iniciales.
-  4. `00_reset_schema.sql`: Script auxiliar para limpiar y recrear únicamente el esquema de `crm_academico` en caso de necesitar reiniciar el entorno desde cero.
-
----
-
-## H. Pruebas
-
-El backend incluye una suite de verificación funcional de **13 casos de integración** (`backend/tests/verify_t3.ts`) que valida registro de personas naturales/jurídicas, cuentas, cargos, abonos, aplicación parcial, rechazo por exceso de saldo disponible, cálculo de saldos, alertas (85 % y exceso), estado de cuenta por período y conciliaciones (exacta y con diferencia).
-
-Para ejecutarla contra tu base de datos `crm_academico` configurada en `backend/.env`:
-
+Verificar en PowerShell:
 ```powershell
-npm run test:verify --prefix backend
+git --version
+docker --version
+docker compose version
 ```
 
-> **Nota:** Durante el desarrollo se diseñaron y prepararon los 13 casos de integración; cada integrante puede ejecutar el comando anterior en su propio entorno local una vez aplicada la base de datos y configurado `backend/.env`.
+### 1.2. Clonar el repositorio
+```powershell
+git clone <URL_DEL_REPOSITORIO>
+cd CRM-ACADEMICO
+```
+
+### 1.3. Configurar variables de entorno
+Copiar las plantillas de configuración:
+```powershell
+Copy-Item .env.example .env
+Copy-Item backend\.env.example backend\.env
+```
+
+Editar **`.env`** (raíz) con una contraseña segura:
+```env
+POSTGRES_DB=crm_academico
+POSTGRES_USER=crm_admin
+POSTGRES_PASSWORD=CAMBIAR_POR_UNA_CLAVE_SEGURA
+CORS_ORIGIN=http://localhost:5173
+```
+
+Editar **`backend/.env`** y definir al menos un `JWT_SECRET` seguro y propio antes de iniciar Docker (no usar valores de ejemplo ni compartir el archivo).
+
+> Para ejecutar con Docker Compose no es necesario crear `frontend/.env`; en Docker el frontend compila con `VITE_API_URL=/api/v1` y consume la API mediante el proxy reverso de Nginx.
+
+### 1.4. Construir e iniciar todos los servicios
+Docker Compose crea automáticamente el volumen `crm-cuentas-corrientes_postgres_data` si no existe, o lo reutiliza si ya existe en tu equipo:
+
+```powershell
+docker compose up -d --build
+```
+
+### 1.5. Comprobar que los contenedores estén saludables
+```powershell
+docker compose ps
+```
+Los tres servicios (`crm_postgres17`, `crm_backend`, `crm_frontend`) deben mostrarse en estado **`healthy`**.
+
+### 1.6. Acceder al frontend y verificar la API
+- **Frontend:** `http://localhost:5173`
+- **API Health:** `http://localhost:5173/api/v1/health` (debe responder `{"status":"ok","service":"crm-academico-api"}`)
+
+**Credenciales de demostración (cargadas automáticamente por `03_seed.sql`, solo uso local):**
+- **Administrador:** `admin@crm-t3.edu` / `Admin123*`
+- **Analista:** `analista@crm-t3.edu` / `Analista123*`
 
 ---
 
-## I. Credenciales de Demostración
+## 2. Comandos Útiles de Docker
 
-El script `database/03_seed.sql` crea dos usuarios ficticios con hashes `bcrypt` válidos exclusivamente para pruebas locales:
+| Acción | Comando (PowerShell) |
+| :--- | :--- |
+| Validar sintaxis de Compose | `docker compose config --quiet` |
+| Iniciar servicios | `docker compose up -d` |
+| Construir e iniciar | `docker compose up -d --build` |
+| Consultar estado y salud | `docker compose ps` |
+| Ver logs de todos los servicios | `docker compose logs -f` |
+| Ver logs del backend | `docker compose logs -f backend` |
+| Ver logs del frontend | `docker compose logs -f frontend` |
+| Ver logs de PostgreSQL | `docker compose logs -f postgres` |
+| Detener servicios (conservando datos) | `docker compose stop` |
+| Detener y quitar contenedores (conservando volumen) | `docker compose down` |
 
-| Rol | Correo | Contraseña |
-| :--- | :--- | :--- |
-| `ADMIN` | `admin@crm-t3.edu` | `Admin123*` |
-| `ANALISTA` | `analista@crm-t3.edu` | `Analista123*` |
-
-> **Advertencia:** Son credenciales locales de demostración con datos ficticios y **no deben utilizarse en entornos productivos**.
+> **Advertencia:** No ejecutar `docker compose down -v` ni `docker volume rm`, ya que eliminarían el volumen persistente de PostgreSQL.
 
 ---
 
-## J. Estructura del Proyecto
+## 3. Escenario B: Recuperación desde un Backup Existente (Opcional)
+
+Si necesitas restaurar una copia existente (`backups/crm_academico_backup.sql`, obtenida por un medio seguro fuera de GitHub) en una instalación nueva:
+
+1. **No mezcles** la inicialización automática de `database/*.sql` con la restauración del backup.
+2. Si deseas restaurar el backup sobre una base vacía, comenta temporalmente la línea `- ./database:/docker-entrypoint-initdb.d:ro` en `docker-compose.yml` antes de iniciar por primera vez y levanta solo PostgreSQL (Docker Compose creará el volumen vacío automáticamente):
+   ```powershell
+   docker compose up -d postgres
+   ```
+3. Restaura el respaldo SQL cuando `crm_postgres17` esté `healthy`:
+   ```powershell
+   Get-Content -Raw backups\crm_academico_backup.sql | docker exec -i crm_postgres17 psql -U crm_admin -d crm_academico
+   ```
+4. Verifica las 15 tablas y levanta el resto del stack:
+   ```powershell
+   docker exec crm_postgres17 psql -U crm_admin -d crm_academico -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE';"
+   docker compose up -d --build
+   ```
+
+> **Importante:** Nunca restaures un backup sobre una base de datos que ya contenga información sin autorización y una copia de seguridad previa.
+
+---
+
+## 4. Arquitectura y Puertos de Acceso
+
+- **Frontend (`crm_frontend`):** React + Vite servido por Nginx en `http://localhost:5173` (proxy reverso `/api/` -> `http://backend:4000`).
+- **Backend (`crm_backend`):** Node.js 22 + Express + TypeScript en puerto interno `4000` dentro de `crm_network`, conectado a PostgreSQL mediante `postgres:5432`.
+- **Base de datos (`crm_postgres17`):** PostgreSQL 17 en `localhost:5433` (interno `5432`), con persistencia en el volumen `crm-cuentas-corrientes_postgres_data` (administrado por Docker Compose).
+
+---
+
+## 5. Ejecución en Modo Desarrollo (Fuera de Docker)
+
+También es posible ejecutar backend y frontend localmente con PostgreSQL disponible en `localhost:5433`:
+
+```powershell
+# Backend
+npm install --prefix backend
+npm run dev --prefix backend
+
+# Frontend (requiere frontend/.env con VITE_API_URL=http://localhost:4000/api/v1)
+npm install --prefix frontend
+npm run dev --prefix frontend
+```
+
+---
+
+## 6. Estructura del Proyecto
 
 ```text
 CRM-ACADEMICO/
-├── backend/
+├── backend/                  # API REST (Node.js + Express + TypeScript)
 │   ├── src/
-│   │   ├── config/          # Pool pg y transacciones (db.ts)
-│   │   ├── controllers/     # Controladores Express por módulo
-│   │   ├── middlewares/     # Autenticación JWT y manejo de errores
-│   │   ├── routes/          # Rutas /api/v1/*
-│   │   ├── services/        # Lógica de negocio y consultas SQL
-│   │   ├── types/           # Tipos TypeScript
-│   │   ├── utils/           # Registro de auditoría
-│   │   ├── app.ts
-│   │   └── server.ts
 │   ├── tests/
-│   │   └── verify_t3.ts     # Suite de 13 pruebas de integración
+│   ├── Dockerfile
+│   ├── .dockerignore
 │   ├── .env.example
 │   ├── package.json
-│   └── tsconfig.json
-├── database/
-│   ├── 00_reset_schema.sql
+│   └── package-lock.json
+├── database/                 # Scripts de inicialización automática (PostgreSQL)
 │   ├── 01_schema.sql
 │   ├── 02_indexes.sql
 │   └── 03_seed.sql
-├── docs/
+├── docs/                     # Documentación técnica y diccionario de datos
 │   ├── README.md
 │   └── diccionario_datos.md
-├── frontend/
+├── frontend/                 # SPA React + Vite + Nginx
 │   ├── src/
-│   │   ├── components/      # Layout general
-│   │   ├── context/         # AuthContext (JWT y catálogos)
-│   │   ├── pages/           # Vistas del CRM
-│   │   ├── services/        # Cliente Axios
-│   │   ├── types/           # Interfaces TypeScript
-│   │   ├── utils/           # Formateo de moneda y fechas
-│   │   ├── App.tsx
-│   │   ├── index.css
-│   │   └── main.tsx
+│   ├── Dockerfile
+│   ├── .dockerignore
+│   ├── nginx.conf
 │   ├── .env.example
-│   ├── index.html
 │   ├── package.json
-│   └── vite.config.ts
+│   └── package-lock.json
+├── backups/                  # Respaldos locales (excluido de Git)
+├── .env.example
 ├── .gitignore
+├── docker-compose.yml
 └── README.md
 ```
 
 ---
 
-## K. Seguridad y Configuración
+## 7. Seguridad y Documentación Adicional
 
-- **Archivos `.env` excluidos:** `.gitignore` protege `.env`, `.env.local` y `**/.env` para evitar subir contraseñas, `DATABASE_URL` o `JWT_SECRET` a GitHub, manteniendo versionadas únicamente las plantillas `.env.example`.
-- **Secretos locales:** Cada integrante debe generar su propio `JWT_SECRET` y usar su contraseña local en `backend/.env`.
-- **Datos ficticios:** Todos los clientes, documentos, montos y movimientos del seed son ficticios.
-- **Despliegue en servidor universitario:** Actualizar `DATABASE_URL` con el host/puerto institucional, activar `DB_SSL=true` si el servidor exige SSL y restringir `CORS_ORIGIN` al dominio del frontend.
-
----
-
-## L. Trabajo Colaborativo con Git
-
-1. Clonar el repositorio (usando la URL asignada en GitHub) y crear una rama por funcionalidad o corrección:
-   ```powershell
-   git checkout -b feat/nombre-tarea
-   ```
-2. Antes de subir cambios, actualizar la rama principal y verificar compilación:
-   ```powershell
-   git pull origin main
-   npm run build --prefix backend
-   npm run build --prefix frontend
-   ```
-3. Confirmar que `git status` no incluya archivos `.env`, `node_modules/` ni `dist/` antes de hacer `git commit` y `git push`.
-
----
-
-## M. Documentación Adicional
-
-- [Diccionario de Datos y Diagrama ER](docs/diccionario_datos.md)
-- [Guía Técnica Complementaria](docs/README.md)
+- No subir archivos `.env` reales, contraseñas, `JWT_SECRET` ni respaldos de `backups/` a GitHub (protegidos por `.gitignore`).
+- Para despliegue en servidor universitario, revisar [Guía Técnica Complementaria](docs/README.md) y [Diccionario de Datos](docs/diccionario_datos.md).

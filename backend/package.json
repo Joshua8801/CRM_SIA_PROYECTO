@@ -1,5 +1,5 @@
 {
-  "name": "crm-cuentas-corrientes-backend",
+  "name": "crm-academico-backend",
   "version": "1.0.0",
   "description": "Backend API REST para CRM de Cuentas Corrientes - Tema T3",
   "main": "dist/server.js",

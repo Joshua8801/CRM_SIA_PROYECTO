@@ -22,7 +22,7 @@ app.use(
 app.use(express.json());
 
 app.get('/api/v1/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'crm-cuentas-corrientes-t3' });
+  res.json({ status: 'ok', service: 'crm-academico-api' });
 });
 
 app.use('/api/v1/auth', authRoutes);

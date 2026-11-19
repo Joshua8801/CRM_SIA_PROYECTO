@@ -26,24 +26,12 @@ Para la presentación general, requisitos e instalación desde cero en una compu
 Si durante el desarrollo necesitas limpiar y recrear únicamente el esquema de **`crm_academico`** (sin afectar otras bases de datos):
 
 ```powershell
-psql -h localhost -p 5433 -U crm_admin -d crm_academico -f database\00_reset_schema.sql
 psql -h localhost -p 5433 -U crm_admin -d crm_academico -f database\01_schema.sql
 psql -h localhost -p 5433 -U crm_admin -d crm_academico -f database\02_indexes.sql
 psql -h localhost -p 5433 -U crm_admin -d crm_academico -f database\03_seed.sql
 ```
 
----
-
-## 3. Conexión al Servidor Universitario
-
-Para migrar la conexión desde PostgreSQL local hacia el servidor universitario, actualiza únicamente `backend/.env`:
-- Cambia `DATABASE_URL` con el host, puerto, usuario, contraseña y base de datos asignados.
-- Configura `DB_SSL=true` si el servidor universitario exige conexiones cifradas (`ssl: { rejectUnauthorized: false }` en `backend/src/config/db.ts`).
-- Ajusta `CORS_ORIGIN` al dominio/puerto donde se sirva el frontend.
-
----
-
-## 4. Comandos de Compilación y Verificación
+## 3. Comandos de Compilación y Verificación
 
 ```powershell
 # Compilar backend (tsc)
@@ -58,6 +46,6 @@ npm run test:verify --prefix backend
 
 ---
 
-## 5. Modelo de Datos y Diagrama ER
+## 4. Modelo de Datos y Diagrama ER
 
 Consulta el detalle de las 15 tablas, restricciones, vistas (`vw_movimiento_saldo`, `vw_cuenta_saldo`), función (`fn_resumen_periodo_cuenta`) y diagrama entidad-relación en [diccionario_datos.md](diccionario_datos.md).
