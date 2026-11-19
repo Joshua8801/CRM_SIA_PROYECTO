@@ -111,11 +111,37 @@ Si necesitas restaurar una copia existente (`backups/crm_academico_backup.sql`, 
 
 ---
 
-## 4. Arquitectura y Puertos de Acceso
+## 4. Arquitectura, Puertos y Personalización
 
-- **Frontend (`crm_frontend`):** React + Vite servido por Nginx en `http://localhost:5173` (proxy reverso `/api/` -> `http://backend:4000`).
-- **Backend (`crm_backend`):** Node.js 22 + Express + TypeScript en puerto interno `4000` dentro de `crm_network`, conectado a PostgreSQL mediante `postgres:5432`.
-- **Base de datos (`crm_postgres17`):** PostgreSQL 17 en `localhost:5433` (interno `5432`), con persistencia en el volumen `crm-cuentas-corrientes_postgres_data` (administrado por Docker Compose).
+- **Frontend (`crm_frontend`):** React + Vite servido por Nginx en `http://localhost:${FRONTEND_PORT}` (por defecto `5173`; proxy reverso `/api/` -> `http://backend:4000`).
+- **Backend (`crm_backend`):** Node.js 22 + Express + TypeScript en puerto interno `4000` dentro de `crm_network` (no se publica al host), conectado a PostgreSQL mediante `postgres:5432`.
+- **Base de datos (`crm_postgres17`):** PostgreSQL 17 en `localhost:${POSTGRES_PORT}` (por defecto `5433`, interno `5432`), con persistencia en el volumen `crm-cuentas-corrientes_postgres_data` (administrado por Docker Compose).
+
+### Cambiar puertos si `5173` o `5433` están ocupados
+
+1. **Comprobar en PowerShell si los puertos están ocupados:**
+   ```powershell
+   Get-NetTCPConnection -LocalPort 5173, 5433 -ErrorAction SilentlyContinue | Select-Object LocalPort, State, OwningProcess
+   ```
+
+2. **Configurar puertos personalizados en `.env` (raíz):**
+   Si cambias `FRONTEND_PORT`, actualiza también `CORS_ORIGIN` para que coincida con la URL del navegador. Por ejemplo, usando `5174` y `5434`:
+   ```env
+   POSTGRES_PORT=5434
+   FRONTEND_PORT=5174
+   CORS_ORIGIN=http://localhost:5174
+   ```
+   *(La conexión interna del backend dentro de Docker sigue siendo `postgres:5432`; no uses `POSTGRES_PORT` en `DATABASE_URL` dentro de Docker.)*
+
+3. **Aplicar los cambios de `.env` sin perder datos:**
+   ```powershell
+   docker compose up -d
+   ```
+
+4. **Ejemplos de acceso con puertos personalizados:**
+   - Aplicación web: `http://localhost:5174`
+   - API Health: `http://localhost:5174/api/v1/health`
+   - PostgreSQL desde el host (DBeaver / `psql` / modo dev): `localhost:5434`
 
 ---
 
