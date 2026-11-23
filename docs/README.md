@@ -31,6 +31,16 @@ psql -h localhost -p 5433 -U crm_admin -d crm_academico -f database\02_indexes.s
 psql -h localhost -p 5433 -U crm_admin -d crm_academico -f database\03_seed.sql
 ```
 
+### Actualización de bases existentes (Migración `04_fix_conciliacion_constraint.sql`)
+
+Para bases de datos ya creadas anteriormente, ejecuta la migración de conciliación:
+
+```powershell
+Get-Content -Raw database\04_fix_conciliacion_constraint.sql | docker exec -i crm_postgres17 psql -U crm_admin -d crm_academico
+```
+
+Esta migración reclasifica automáticamente a `CON_DIFERENCIA` cualquier conciliación histórica marcada como `CONCILIADO` que presente diferencias compensadas en `saldo_inicial`, `total_cargos`, `total_abonos` o `saldo_final`, conservando intactos todos los importes guardados, y actualiza la restricción `chk_trs_concil_estado_coherente`.
+
 ## 3. Comandos de Compilación y Verificación
 
 ```powershell

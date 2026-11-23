@@ -143,6 +143,14 @@ export interface InteraccionCliente {
   fecha_proximo_seguimiento: string | null;
 }
 
+export interface PartidaDiscrepanteConciliacion {
+  campo: 'saldo_inicial' | 'total_cargos' | 'total_abonos' | 'saldo_final';
+  etiqueta: string;
+  sistema: number;
+  manual: number;
+  diferencia: number;
+}
+
 export interface ConciliacionCuenta {
   id_conciliacion: number;
   id_cuenta: number;
@@ -160,6 +168,10 @@ export interface ConciliacionCuenta {
   total_abonos_manual: string;
   saldo_final_manual: string;
   diferencia_saldo: string;
+  diferencia_saldo_inicial?: number;
+  diferencia_cargos?: number;
+  diferencia_abonos?: number;
+  partidas_discrepantes?: PartidaDiscrepanteConciliacion[];
   estado: 'CONCILIADO' | 'CON_DIFERENCIA';
   observaciones: string | null;
   usuario_concilia: string;

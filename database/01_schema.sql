@@ -197,9 +197,23 @@ CREATE TABLE trs_conciliacion_cuenta (
         saldo_final_manual = ROUND((saldo_inicial_manual + total_cargos_manual - total_abonos_manual)::numeric, 2)
     ),
     CONSTRAINT chk_trs_concil_estado_coherente CHECK (
-        (estado = 'CONCILIADO' AND saldo_final_sistema = saldo_final_manual)
+        (
+            estado = 'CONCILIADO'
+            AND saldo_inicial_sistema = saldo_inicial_manual
+            AND total_cargos_sistema  = total_cargos_manual
+            AND total_abonos_sistema  = total_abonos_manual
+            AND saldo_final_sistema   = saldo_final_manual
+        )
         OR
-        (estado = 'CON_DIFERENCIA' AND saldo_final_sistema <> saldo_final_manual)
+        (
+            estado = 'CON_DIFERENCIA'
+            AND (
+                saldo_inicial_sistema <> saldo_inicial_manual
+                OR total_cargos_sistema  <> total_cargos_manual
+                OR total_abonos_sistema  <> total_abonos_manual
+                OR saldo_final_sistema   <> saldo_final_manual
+            )
+        )
     )
 );
 

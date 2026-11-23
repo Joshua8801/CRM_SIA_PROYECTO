@@ -89,7 +89,7 @@ erDiagram
 - **PK:** `id_conciliacion`
 - **FK:** `id_cuenta` -> `mae_cuenta_corriente`, `id_usuario_concilia` -> `mae_usuario`.
 - **Campos:** `fecha_inicio`, `fecha_fin`, `saldo_inicial_sistema`, `total_cargos_sistema`, `total_abonos_sistema`, `saldo_final_sistema`, `saldo_inicial_manual`, `total_cargos_manual`, `total_abonos_manual`, `saldo_final_manual`, `diferencia_saldo` (`GENERATED ALWAYS AS (saldo_final_sistema - saldo_final_manual) STORED`), `estado` (`CONCILIADO`, `CON_DIFERENCIA`), `observaciones`, `fecha_conciliacion`.
-- **Restricciones:** Coherencia matemática `saldo_final = saldo_inicial + cargos - abonos` en ambos lados y coherencia de `estado` con `diferencia_saldo`.
+- **Restricciones:** Coherencia matemática `saldo_final = saldo_inicial + cargos - abonos` en ambos lados y coherencia de `estado` (`CONCILIADO` únicamente cuando coinciden `saldo_inicial`, `total_cargos`, `total_abonos` y `saldo_final`; en caso contrario `CON_DIFERENCIA`).
 
 ### `trs_auditoria`
 - **PK:** `id_auditoria` (`BIGINT`)

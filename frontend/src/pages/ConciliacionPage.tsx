@@ -17,6 +17,14 @@ interface PreviewSistema {
   };
 }
 
+function toCents(val: string | number): number {
+  return Math.round(Number(val) * 100);
+}
+
+function fromCents(cents: number): number {
+  return Number((cents / 100).toFixed(2));
+}
+
 export default function ConciliacionPage() {
   const { usuario } = useAuth();
   const [cuentas, setCuentas] = useState<CuentaCorriente[]>([]);
@@ -83,7 +91,6 @@ export default function ConciliacionPage() {
     }
   };
 
-  // Autocalcular saldo final manual cuando cambian los componentes manuales
   const actualizarCampoManual = (campo: string, valor: string) => {
     const next = { ...manual, [campo]: valor };
     if (
@@ -91,40 +98,121 @@ export default function ConciliacionPage() {
       campo === 'total_cargos_manual' ||
       campo === 'total_abonos_manual'
     ) {
-      const ini = Number(next.saldo_inicial_manual || 0);
-      const car = Number(next.total_cargos_manual || 0);
-      const abo = Number(next.total_abonos_manual || 0);
-      next.saldo_final_manual = (ini + car - abo).toFixed(2);
+      const iniCents = toCents(next.saldo_inicial_manual || 0);
+      const carCents = toCents(next.total_cargos_manual || 0);
+      const aboCents = toCents(next.total_abonos_manual || 0);
+      next.saldo_final_manual = fromCents(
+        iniCents + carCents - aboCents
+      ).toFixed(2);
     }
     setManual(next);
   };
 
-  const diferenciaEnVivo =
-    preview && manual.saldo_final_manual !== ''
-      ? Number(
-          (
-            preview.sistema.saldo_final_sistema -
-            Number(manual.saldo_final_manual)
-          ).toFixed(2)
-        )
-      : null;
+  const todosManualesCompletos =
+    preview !== null &&
+    manual.saldo_inicial_manual !== '' &&
+    manual.total_cargos_manual !== '' &&
+    manual.total_abonos_manual !== '' &&
+    manual.saldo_final_manual !== '';
+
+  const comparacionEnVivo = todosManualesCompletos
+    ? (() => {
+        const items = [
+          {
+            campo: 'saldo_inicial',
+            etiqueta: 'Saldo Inicial',
+            sistema: fromCents(toCents(preview.sistema.saldo_inicial_sistema)),
+            manual: fromCents(toCents(manual.saldo_inicial_manual)),
+            difCents:
+              toCents(preview.sistema.saldo_inicial_sistema) -
+              toCents(manual.saldo_inicial_manual),
+          },
+          {
+            campo: 'total_cargos',
+            etiqueta: 'Total Cargos',
+            sistema: fromCents(toCents(preview.sistema.total_cargos_sistema)),
+            manual: fromCents(toCents(manual.total_cargos_manual)),
+            difCents:
+              toCents(preview.sistema.total_cargos_sistema) -
+              toCents(manual.total_cargos_manual),
+          },
+          {
+            campo: 'total_abonos',
+            etiqueta: 'Total Abonos',
+            sistema: fromCents(toCents(preview.sistema.total_abonos_sistema)),
+            manual: fromCents(toCents(manual.total_abonos_manual)),
+            difCents:
+              toCents(preview.sistema.total_abonos_sistema) -
+              toCents(manual.total_abonos_manual),
+          },
+          {
+            campo: 'saldo_final',
+            etiqueta: 'Saldo Final',
+            sistema: fromCents(toCents(preview.sistema.saldo_final_sistema)),
+            manual: fromCents(toCents(manual.saldo_final_manual)),
+            difCents:
+              toCents(preview.sistema.saldo_final_sistema) -
+              toCents(manual.saldo_final_manual),
+          },
+        ].map((item) => ({
+          ...item,
+          diferencia: fromCents(item.difCents),
+          discrepante: item.difCents !== 0,
+        }));
+
+        const discrepantes = items.filter((i) => i.discrepante);
+        const formulaManualValida =
+          toCents(manual.saldo_final_manual) ===
+          toCents(manual.saldo_inicial_manual) +
+            toCents(manual.total_cargos_manual) -
+            toCents(manual.total_abonos_manual);
+
+        return {
+          items,
+          discrepantes,
+          conciliado: discrepantes.length === 0,
+          formulaManualValida,
+        };
+      })()
+    : null;
 
   const handleGuardarConciliacion = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setMensaje('');
     try {
-      await api.post('/conciliaciones', {
-        id_cuenta: Number(idCuenta),
-        fecha_inicio: fechaInicio,
-        fecha_fin: fechaFin,
-        saldo_inicial_manual: Number(manual.saldo_inicial_manual),
-        total_cargos_manual: Number(manual.total_cargos_manual),
-        total_abonos_manual: Number(manual.total_abonos_manual),
-        saldo_final_manual: Number(manual.saldo_final_manual),
-        observaciones: manual.observaciones || null,
-      });
-      setMensaje('Conciliación registrada correctamente.');
+      const { data } = await api.post<{ conciliacion: ConciliacionCuenta }>(
+        '/conciliaciones',
+        {
+          id_cuenta: Number(idCuenta),
+          fecha_inicio: fechaInicio,
+          fecha_fin: fechaFin,
+          saldo_inicial_manual: Number(manual.saldo_inicial_manual),
+          total_cargos_manual: Number(manual.total_cargos_manual),
+          total_abonos_manual: Number(manual.total_abonos_manual),
+          saldo_final_manual: Number(manual.saldo_final_manual),
+          observaciones: manual.observaciones || null,
+        }
+      );
+
+      const saved = data.conciliacion;
+      if (saved.estado === 'CONCILIADO') {
+        setMensaje(
+          'Conciliación registrada como CONCILIADO: los cuatro importes coinciden exactamente.'
+        );
+      } else {
+        const detalleDiscrepancias = (saved.partidas_discrepantes || [])
+          .map((p) => p.etiqueta)
+          .join(', ');
+        setMensaje(
+          `Conciliación registrada como CON_DIFERENCIA${
+            detalleDiscrepancias
+              ? ` (partidas discrepantes: ${detalleDiscrepancias})`
+              : ''
+          }.`
+        );
+      }
+
       await cargarInicial();
     } catch (err: unknown) {
       setError(
@@ -143,7 +231,7 @@ export default function ConciliacionPage() {
         </h2>
         <p className="text-sm text-slate-500">
           Producto diferenciador: compara el cálculo automático del sistema
-          frente al cálculo manual del mismo período.
+          frente al cálculo manual del mismo período en sus cuatro importes.
         </p>
       </div>
 
@@ -340,33 +428,112 @@ export default function ConciliacionPage() {
             </div>
           </div>
 
-          {/* Resultado en vivo */}
-          {diferenciaEnVivo !== null && (
-            <div
-              className={`p-4 rounded-lg border flex items-center justify-between ${
-                Math.abs(diferenciaEnVivo) < 0.01
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                  : 'bg-amber-50 border-amber-200 text-amber-800'
-              }`}
-            >
-              <div className="flex items-center gap-2 font-medium text-sm">
-                {Math.abs(diferenciaEnVivo) < 0.01 ? (
-                  <>
-                    <CheckCircle2 className="w-5 h-5" />
-                    <span>CONCILIADO: El cálculo manual coincide con el sistema.</span>
-                  </>
-                ) : (
-                  <>
-                    <AlertCircle className="w-5 h-5" />
-                    <span>
-                      CON DIFERENCIA: Existe una variación de{' '}
-                      {formatMoney(
-                        diferenciaEnVivo,
-                        preview.cuenta.moneda_simbolo
-                      )}
-                    </span>
-                  </>
-                )}
+          {/* Resultado en vivo y desglose de los 4 importes */}
+          {comparacionEnVivo && (
+            <div className="space-y-3">
+              <div
+                className={`p-4 rounded-lg border flex flex-col gap-1 ${
+                  !comparacionEnVivo.formulaManualValida
+                    ? 'bg-red-50 border-red-200 text-red-800'
+                    : comparacionEnVivo.conciliado
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-amber-50 border-amber-200 text-amber-800'
+                }`}
+              >
+                <div className="flex items-center gap-2 font-medium text-sm">
+                  {!comparacionEnVivo.formulaManualValida ? (
+                    <>
+                      <AlertCircle className="w-5 h-5 shrink-0" />
+                      <span>
+                        Inconsistencia en cálculo manual: Saldo final manual debe
+                        ser igual a Saldo inicial + Cargos - Abonos.
+                      </span>
+                    </>
+                  ) : comparacionEnVivo.conciliado ? (
+                    <>
+                      <CheckCircle2 className="w-5 h-5 shrink-0" />
+                      <span>
+                        CONCILIADO: Los cuatro importes (saldo inicial, cargos,
+                        abonos y saldo final) coinciden exactamente.
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertCircle className="w-5 h-5 shrink-0" />
+                      <span>
+                        CON_DIFERENCIA: Existen discrepancias en{' '}
+                        {comparacionEnVivo.discrepantes
+                          .map((d) => d.etiqueta)
+                          .join(', ')}
+                        .
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Desglose por cada importe */}
+              <div className="border border-slate-200 rounded-lg overflow-hidden">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
+                    <tr>
+                      <th className="px-3 py-2">Importe</th>
+                      <th className="px-3 py-2 text-right">Sistema</th>
+                      <th className="px-3 py-2 text-right">Manual</th>
+                      <th className="px-3 py-2 text-right">
+                        Diferencia (Sis - Man)
+                      </th>
+                      <th className="px-3 py-2 text-right">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {comparacionEnVivo.items.map((item) => (
+                      <tr
+                        key={item.campo}
+                        className={item.discrepante ? 'bg-amber-50/60' : ''}
+                      >
+                        <td className="px-3 py-2 font-medium text-slate-800">
+                          {item.etiqueta}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          {formatMoney(
+                            item.sistema,
+                            preview.cuenta.moneda_simbolo
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          {formatMoney(
+                            item.manual,
+                            preview.cuenta.moneda_simbolo
+                          )}
+                        </td>
+                        <td
+                          className={`px-3 py-2 text-right font-semibold ${
+                            item.discrepante
+                              ? 'text-amber-700'
+                              : 'text-emerald-700'
+                          }`}
+                        >
+                          {formatMoney(
+                            item.diferencia,
+                            preview.cuenta.moneda_simbolo
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <span
+                            className={`px-2 py-0.5 rounded font-medium ${
+                              item.discrepante
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-emerald-100 text-emerald-700'
+                            }`}
+                          >
+                            {item.discrepante ? 'Discrepante' : 'Coincide'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
@@ -414,14 +581,15 @@ export default function ConciliacionPage() {
               <th className="px-4 py-3">Período</th>
               <th className="px-4 py-3 text-right">Saldo Sistema</th>
               <th className="px-4 py-3 text-right">Saldo Manual</th>
-              <th className="px-4 py-3 text-right">Diferencia</th>
+              <th className="px-4 py-3 text-right">Dif. Saldo Final</th>
+              <th className="px-4 py-3">Diferencias por Partida</th>
               <th className="px-4 py-3">Estado</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {historial.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-slate-500">
+                <td colSpan={8} className="px-4 py-6 text-center text-slate-500">
                   No hay conciliaciones registradas aún.
                 </td>
               </tr>
@@ -450,6 +618,21 @@ export default function ConciliacionPage() {
                   </td>
                   <td className="px-4 py-3 text-right font-semibold">
                     {formatMoney(h.diferencia_saldo, h.moneda_simbolo)}
+                  </td>
+                  <td className="px-4 py-3 text-xs">
+                    {!h.partidas_discrepantes ||
+                    h.partidas_discrepantes.length === 0 ? (
+                      <span className="text-emerald-700">Sin diferencias</span>
+                    ) : (
+                      <div className="space-y-0.5">
+                        {h.partidas_discrepantes.map((p) => (
+                          <div key={p.campo} className="text-amber-800">
+                            <span className="font-medium">{p.etiqueta}:</span>{' '}
+                            {formatMoney(p.diferencia, h.moneda_simbolo)}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <span

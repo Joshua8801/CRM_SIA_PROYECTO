@@ -178,7 +178,115 @@ async function run() {
   assert.equal(Number(concDif.diferencia_saldo), 150);
   console.log('✓ 13. Conciliación con diferencias OK');
 
-  console.log('=== TODAS LAS 13 PRUEBAS APROBADAS ===');
+  // 14. Casos específicos de conciliación (4 importes + diferencia compensada + fórmula inconsistente)
+  const cliConc = await crearCliente(
+    {
+      tipo_persona: 'JURIDICA',
+      id_tipo_documento: 1,
+      numero_documento: `20888${sufijo}`,
+      razon_social: `Empresa Concil ${sufijo} S.A.C.`,
+      id_segmento: 2,
+      linea_credito: 20000,
+    },
+    idUsuario
+  );
+  const idCuentaConc = cliConc.cuenta_inicial.id_cuenta as number;
+  const ayerDate = new Date();
+  ayerDate.setDate(ayerDate.getDate() - 1);
+  const ayer = ayerDate.toISOString().slice(0, 10);
+
+  // Saldo inicial = 4500 (movimiento de ayer), cargos del período = 1380, abonos = 3600 => saldo final = 2280
+  await registrarMovimiento(
+    {
+      id_cuenta: idCuentaConc,
+      id_tipo_movimiento: 1,
+      fecha_movimiento: ayer,
+      monto: 4500,
+      glosa: 'Saldo inicial período',
+    },
+    idUsuario
+  );
+  await registrarMovimiento(
+    {
+      id_cuenta: idCuentaConc,
+      id_tipo_movimiento: 1,
+      fecha_movimiento: hoy,
+      monto: 1380,
+      glosa: 'Cargos período',
+    },
+    idUsuario
+  );
+  await registrarMovimiento(
+    {
+      id_cuenta: idCuentaConc,
+      id_tipo_movimiento: 3,
+      fecha_movimiento: hoy,
+      monto: 3600,
+      glosa: 'Abonos período',
+    },
+    idUsuario
+  );
+
+  // Caso 1: 4 importes coinciden (4500, 1380, 3600, 2280) => CONCILIADO
+  const caso1 = await registrarConciliacion(
+    {
+      id_cuenta: idCuentaConc,
+      fecha_inicio: hoy,
+      fecha_fin: hoy,
+      saldo_inicial_manual: 4500,
+      total_cargos_manual: 1380,
+      total_abonos_manual: 3600,
+      saldo_final_manual: 2280,
+    },
+    idUsuario
+  );
+  assert.equal(caso1.estado, 'CONCILIADO');
+  assert.equal(Number(caso1.diferencia_saldo), 0);
+  assert.equal(caso1.partidas_discrepantes.length, 0);
+  console.log('✓ 14a. Conciliación 4 importes exactos (4500/1380/3600/2280) => CONCILIADO OK');
+
+  // Caso 2: Diferencia compensada (cargos 1480, abonos 3700, saldo final 2280) => CON_DIFERENCIA con 2 partidas
+  const caso2 = await registrarConciliacion(
+    {
+      id_cuenta: idCuentaConc,
+      fecha_inicio: hoy,
+      fecha_fin: hoy,
+      saldo_inicial_manual: 4500,
+      total_cargos_manual: 1480,
+      total_abonos_manual: 3700,
+      saldo_final_manual: 2280,
+    },
+    idUsuario
+  );
+  assert.equal(caso2.estado, 'CON_DIFERENCIA');
+  assert.equal(Number(caso2.diferencia_saldo), 0);
+  assert.equal(caso2.partidas_discrepantes.length, 2);
+  assert.deepEqual(
+    caso2.partidas_discrepantes.map((p: { campo: string }) => p.campo),
+    ['total_cargos', 'total_abonos']
+  );
+  console.log('✓ 14b. Conciliación con diferencia compensada (dif_saldo=0) => CON_DIFERENCIA (2 partidas) OK');
+
+  // Caso 3: Saldo final manual inconsistente con su propia fórmula => rechazo
+  await assert.rejects(
+    () =>
+      registrarConciliacion(
+        {
+          id_cuenta: idCuentaConc,
+          fecha_inicio: hoy,
+          fecha_fin: hoy,
+          saldo_inicial_manual: 4500,
+          total_cargos_manual: 1380,
+          total_abonos_manual: 3600,
+          saldo_final_manual: 2500,
+        },
+        idUsuario
+      ),
+    /debe ser igual a Saldo inicial \+ Cargos - Abonos/i
+  );
+  console.log('✓ 14c. Rechazo de saldo final manual inconsistente OK');
+
+  console.log('=== TODAS LAS PRUEBAS APROBADAS ===');
 }
 
 run()
