@@ -91,14 +91,29 @@ export async function listarClientes(filtros: {
       td.nombre AS tipo_documento_nombre,
       s.codigo AS segmento_codigo,
       s.nombre AS segmento_nombre,
-      COALESCE(SUM(vcs.linea_credito), 0)::numeric(14,2) AS linea_credito_total,
-      COALESCE(SUM(vcs.saldo_actual), 0)::numeric(14,2) AS saldo_total,
+      COALESCE(
+        JSON_AGG(
+          JSON_BUILD_OBJECT(
+            'id_cuenta', vcs.id_cuenta,
+            'numero_cuenta', vcs.numero_cuenta,
+            'id_tipo_moneda', tm.id_tipo_moneda,
+            'moneda_codigo', tm.codigo,
+            'moneda_simbolo', tm.simbolo,
+            'linea_credito', vcs.linea_credito,
+            'saldo_actual', vcs.saldo_actual,
+            'excede_linea', vcs.excede_linea
+          )
+          ORDER BY tm.id_tipo_moneda
+        ) FILTER (WHERE vcs.id_cuenta IS NOT NULL),
+        '[]'::json
+      ) AS cuentas_resumen,
       COUNT(vcs.id_cuenta)::int AS cantidad_cuentas,
       COALESCE(BOOL_OR(vcs.excede_linea), FALSE) AS excede_linea
     FROM mae_cliente c
     JOIN tipo_documento td ON td.id_tipo_documento = c.id_tipo_documento
     JOIN cat_segmento_cliente s ON s.id_segmento = c.id_segmento
     LEFT JOIN vw_cuenta_saldo vcs ON vcs.id_cliente = c.id_cliente
+    LEFT JOIN tipo_moneda tm ON tm.id_tipo_moneda = vcs.id_tipo_moneda
     ${whereClause}
     GROUP BY c.id_cliente, td.codigo, td.nombre, s.codigo, s.nombre
     ORDER BY c.fecha_registro DESC`,
@@ -370,5 +385,75 @@ export async function actualizarCliente(
     });
 
     return updatedRes.rows[0];
+  });
+}
+
+export async function abrirCuentaCliente(
+  idCliente: number,
+  input: { id_tipo_moneda: number; linea_credito: number },
+  idUsuario: number
+) {
+  const lineaCredito = Number(input.linea_credito);
+  if (!Number.isFinite(lineaCredito) || lineaCredito < 0) {
+    throw new AppError('La línea de crédito no puede ser negativa.', 400);
+  }
+
+  return withTransaction(async (client) => {
+    const cliRes = await client.query(
+      'SELECT id_cliente FROM mae_cliente WHERE id_cliente = $1 FOR UPDATE',
+      [idCliente]
+    );
+    if (cliRes.rows.length === 0) {
+      throw new AppError('Cliente no encontrado.', 404);
+    }
+
+    const monedaRes = await client.query<{
+      id_tipo_moneda: number;
+      codigo: string;
+      nombre: string;
+      simbolo: string;
+    }>(
+      'SELECT id_tipo_moneda, codigo, nombre, simbolo FROM tipo_moneda WHERE id_tipo_moneda = $1 AND activo = TRUE',
+      [input.id_tipo_moneda]
+    );
+    if (monedaRes.rows.length === 0) {
+      throw new AppError('Tipo de moneda inválido o inactivo.', 400);
+    }
+    const moneda = monedaRes.rows[0];
+
+    const existeRes = await client.query(
+      'SELECT id_cuenta FROM mae_cuenta_corriente WHERE id_cliente = $1 AND id_tipo_moneda = $2',
+      [idCliente, input.id_tipo_moneda]
+    );
+    if (existeRes.rows.length > 0) {
+      throw new AppError(
+        `El cliente ya tiene una cuenta corriente en ${moneda.codigo}.`,
+        409
+      );
+    }
+
+    const numeroCuenta = `CC-${String(idCliente).padStart(5, '0')}-${moneda.codigo}`;
+    const cuentaRes = await client.query(
+      `INSERT INTO mae_cuenta_corriente
+        (id_cliente, id_tipo_moneda, numero_cuenta, linea_credito)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [idCliente, input.id_tipo_moneda, numeroCuenta, lineaCredito]
+    );
+
+    await registrarAuditoria(client, {
+      tablaAfectada: 'mae_cuenta_corriente',
+      idRegistro: cuentaRes.rows[0].id_cuenta,
+      accion: 'INSERT',
+      datosNuevos: cuentaRes.rows[0],
+      idUsuario,
+    });
+
+    return {
+      ...cuentaRes.rows[0],
+      moneda_codigo: moneda.codigo,
+      moneda_nombre: moneda.nombre,
+      moneda_simbolo: moneda.simbolo,
+    };
   });
 }

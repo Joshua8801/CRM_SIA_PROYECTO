@@ -3,7 +3,10 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import { pool } from '../src/config/db';
-import { crearCliente } from '../src/services/clientes.service';
+import {
+  abrirCuentaCliente,
+  crearCliente,
+} from '../src/services/clientes.service';
 import { obtenerCuentaPorId, obtenerEstadoCuenta } from '../src/services/cuentas.service';
 import { aplicarPago, anularMovimiento, registrarMovimiento } from '../src/services/movimientos.service';
 import { actualizarEstadoAlerta } from '../src/services/alertas.service';
@@ -14,7 +17,10 @@ import {
   obtenerGestionPorId,
   vincularAbonoACompromiso,
 } from '../src/services/cobranza.service';
-import { obtenerCargosAbonosMensuales } from '../src/services/dashboard.service';
+import {
+  obtenerCargosAbonosMensuales,
+  obtenerResumenDashboardData,
+} from '../src/services/dashboard.service';
 
 async function run() {
   console.log('=== Verificación Funcional CRM Cuentas Corrientes T3 ===');
@@ -571,6 +577,87 @@ async function run() {
     assert.equal(apiMes.abonos, Number(dbMes?.abonos || 0));
   }
   console.log('✓ 19. Cargos y abonos mensuales (6 meses, 2 meses vs PostgreSQL, sin anulados/promesas/duplicados) OK');
+
+  // 20. Multimoneda PEN y USD (abrir cuenta USD, rechazar duplicada, movimientos USD=100-30=70, conservar PEN)
+  const dashAntes = await obtenerResumenDashboardData();
+  const penKpiAntes = dashAntes.kpisPorMoneda.find(
+    (k: { moneda_codigo: string }) => k.moneda_codigo === 'PEN'
+  );
+  const penSerieAntes = dashAntes.movimientosMensuales.find(
+    (s) => s.moneda_codigo === 'PEN'
+  );
+  const penMesAntes = penSerieAntes?.meses.find((m) => m.periodo === periodoActual);
+
+  const cuentaUsd = await abrirCuentaCliente(
+    cliNatural.id_cliente,
+    { id_tipo_moneda: 2, linea_credito: 500 },
+    idUsuario
+  );
+  assert.equal(cuentaUsd.moneda_codigo, 'USD');
+
+  // Rechazar segunda cuenta USD para el mismo cliente
+  await assert.rejects(
+    () =>
+      abrirCuentaCliente(
+        cliNatural.id_cliente,
+        { id_tipo_moneda: 2, linea_credito: 500 },
+        idUsuario
+      ),
+    /ya tiene una cuenta corriente en USD/i
+  );
+
+  // Cargo USD 100 y Abono USD 30 en el mes actual => saldo USD = 70
+  await registrarMovimiento(
+    {
+      id_cuenta: cuentaUsd.id_cuenta,
+      id_tipo_movimiento: 1,
+      numero_documento_ref: `F-USD-${sufijo}`,
+      fecha_movimiento: hoy,
+      fecha_vencimiento: hoy,
+      monto: 100,
+      glosa: 'Cargo USD prueba',
+    },
+    idUsuario
+  );
+  await registrarMovimiento(
+    {
+      id_cuenta: cuentaUsd.id_cuenta,
+      id_tipo_movimiento: 3,
+      numero_documento_ref: `OP-USD-${sufijo}`,
+      fecha_movimiento: hoy,
+      monto: 30,
+      glosa: 'Abono USD prueba',
+    },
+    idUsuario
+  );
+
+  const detUsd = await obtenerCuentaPorId(cuentaUsd.id_cuenta);
+  assert.equal(Number(detUsd.cuenta.saldo_actual), 70);
+
+  const dashDespues = await obtenerResumenDashboardData();
+  const usdSerie = dashDespues.movimientosMensuales.find(
+    (s) => s.moneda_codigo === 'USD'
+  );
+  const usdMes: { periodo: string; cargos: number; abonos: number } | undefined =
+    usdSerie?.meses.find((m) => m.periodo === periodoActual);
+  assert.ok(usdMes);
+  assert.equal(usdMes.cargos, 100);
+  assert.equal(usdMes.abonos, 30);
+
+  // Totales PEN conservados intactos
+  const penKpiDespues = dashDespues.kpisPorMoneda.find(
+    (k: { moneda_codigo: string }) => k.moneda_codigo === 'PEN'
+  );
+  const penSerieDespues = dashDespues.movimientosMensuales.find(
+    (s) => s.moneda_codigo === 'PEN'
+  );
+  const penMesDespues = penSerieDespues?.meses.find(
+    (m) => m.periodo === periodoActual
+  );
+  assert.equal(penKpiDespues?.cartera_por_cobrar, penKpiAntes?.cartera_por_cobrar);
+  assert.equal(penMesDespues?.cargos, penMesAntes?.cargos);
+  assert.equal(penMesDespues?.abonos, penMesAntes?.abonos);
+  console.log('✓ 20. Multimoneda PEN/USD (saldo USD=70, gráfica USD 100/30, PEN intacto y rechazo 2da USD) OK');
 
   console.log('=== TODAS LAS PRUEBAS APROBADAS ===');
 }

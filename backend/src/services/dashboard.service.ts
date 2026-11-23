@@ -100,6 +100,7 @@ export async function obtenerCargosAbonosMensuales(): Promise<
 export async function obtenerResumenDashboardData() {
   const [
     kpisRes,
+    kpisPorMonedaRes,
     alertasRes,
     seguimientosRes,
     segmentosRes,
@@ -109,10 +110,24 @@ export async function obtenerResumenDashboardData() {
       SELECT
         (SELECT COUNT(*) FROM mae_cliente WHERE estado = 'ACTIVO')::int AS clientes_activos,
         (SELECT COUNT(*) FROM mae_cuenta_corriente WHERE estado = 'ACTIVA')::int AS cuentas_activas,
-        (SELECT COALESCE(SUM(saldo_actual), 0) FROM vw_cuenta_saldo WHERE saldo_actual > 0)::numeric(14,2) AS cartera_por_cobrar,
-        (SELECT COALESCE(SUM(linea_credito), 0) FROM mae_cuenta_corriente WHERE estado = 'ACTIVA')::numeric(14,2) AS linea_credito_total,
         (SELECT COUNT(*) FROM trs_alerta_credito WHERE estado = 'ACTIVA')::int AS alertas_activas,
         (SELECT COUNT(*) FROM vw_cuenta_saldo WHERE excede_linea = TRUE AND estado = 'ACTIVA')::int AS cuentas_excedidas
+    `),
+    pool.query(`
+      SELECT
+        tm.id_tipo_moneda,
+        tm.codigo AS moneda_codigo,
+        tm.nombre AS moneda_nombre,
+        tm.simbolo AS moneda_simbolo,
+        COUNT(vcs.id_cuenta) FILTER (WHERE vcs.estado = 'ACTIVA')::int AS cuentas_activas,
+        COALESCE(SUM(CASE WHEN vcs.saldo_actual > 0 THEN vcs.saldo_actual ELSE 0 END), 0)::numeric(14,2) AS cartera_por_cobrar,
+        COALESCE(SUM(CASE WHEN vcs.estado = 'ACTIVA' THEN vcs.linea_credito ELSE 0 END), 0)::numeric(14,2) AS linea_credito_total,
+        COUNT(vcs.id_cuenta) FILTER (WHERE vcs.excede_linea = TRUE AND vcs.estado = 'ACTIVA')::int AS cuentas_excedidas
+      FROM tipo_moneda tm
+      LEFT JOIN vw_cuenta_saldo vcs ON vcs.id_tipo_moneda = tm.id_tipo_moneda
+      WHERE tm.activo = TRUE
+      GROUP BY tm.id_tipo_moneda, tm.codigo, tm.nombre, tm.simbolo
+      ORDER BY tm.id_tipo_moneda ASC
     `),
     pool.query(`
       SELECT
@@ -156,19 +171,25 @@ export async function obtenerResumenDashboardData() {
     pool.query(`
       SELECT
         s.nombre AS segmento,
+        tm.id_tipo_moneda,
+        tm.codigo AS moneda_codigo,
+        tm.simbolo AS moneda_simbolo,
         COUNT(DISTINCT c.id_cliente)::int AS cantidad_clientes,
         COALESCE(SUM(vcs.saldo_actual), 0)::numeric(14,2) AS saldo_total
       FROM cat_segmento_cliente s
+      CROSS JOIN tipo_moneda tm
       LEFT JOIN mae_cliente c ON c.id_segmento = s.id_segmento AND c.estado <> 'INACTIVO'
-      LEFT JOIN vw_cuenta_saldo vcs ON vcs.id_cliente = c.id_cliente
-      GROUP BY s.id_segmento, s.nombre
-      ORDER BY s.id_segmento
+      LEFT JOIN vw_cuenta_saldo vcs ON vcs.id_cliente = c.id_cliente AND vcs.id_tipo_moneda = tm.id_tipo_moneda
+      WHERE tm.activo = TRUE
+      GROUP BY s.id_segmento, s.nombre, tm.id_tipo_moneda, tm.codigo, tm.simbolo
+      ORDER BY tm.id_tipo_moneda ASC, s.id_segmento ASC
     `),
     obtenerCargosAbonosMensuales(),
   ]);
 
   return {
     kpis: kpisRes.rows[0],
+    kpisPorMoneda: kpisPorMonedaRes.rows,
     alertasRecientes: alertasRes.rows,
     proximosSeguimientos: seguimientosRes.rows,
     resumenSegmentos: segmentosRes.rows,

@@ -1,6 +1,7 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../types';
 import {
+  abrirCuentaCliente,
   actualizarCliente,
   crearCliente,
   listarClientes,
@@ -84,6 +85,33 @@ export async function putCliente(
       req.user!.id_usuario
     );
     res.json({ cliente });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function postCuentaCliente(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const { id_tipo_moneda, linea_credito } = req.body;
+    if (!id_tipo_moneda || linea_credito === undefined) {
+      res.status(400).json({
+        error: 'La moneda y la línea de crédito son obligatorias.',
+      });
+      return;
+    }
+    const cuenta = await abrirCuentaCliente(
+      Number(req.params.id),
+      {
+        id_tipo_moneda: Number(id_tipo_moneda),
+        linea_credito: Number(linea_credito),
+      },
+      req.user!.id_usuario
+    );
+    res.status(201).json({ cuenta });
   } catch (error) {
     next(error);
   }

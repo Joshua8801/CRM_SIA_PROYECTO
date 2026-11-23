@@ -48,6 +48,17 @@ export interface Catalogos {
   }>;
 }
 
+export interface ClienteCuentaResumen {
+  id_cuenta: number;
+  numero_cuenta: string;
+  id_tipo_moneda: number;
+  moneda_codigo: string;
+  moneda_simbolo: string;
+  linea_credito: string;
+  saldo_actual: string;
+  excede_linea: boolean;
+}
+
 export interface Cliente {
   id_cliente: number;
   tipo_persona: TipoPersona;
@@ -66,8 +77,8 @@ export interface Cliente {
   telefono: string | null;
   direccion: string | null;
   estado: 'ACTIVO' | 'BLOQUEADO' | 'INACTIVO';
-  linea_credito_total: string;
-  saldo_total: string;
+  cuentas_resumen: ClienteCuentaResumen[];
+  cantidad_cuentas: number;
   excede_linea: boolean;
   fecha_registro: string;
 }

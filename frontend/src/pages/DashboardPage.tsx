@@ -14,15 +14,25 @@ import MonthlyMovementsChart, {
   SerieMonedaMensual,
 } from '../components/MonthlyMovementsChart';
 
+interface KpiMoneda {
+  id_tipo_moneda: number;
+  moneda_codigo: string;
+  moneda_nombre: string;
+  moneda_simbolo: string;
+  cuentas_activas: number;
+  cartera_por_cobrar: string;
+  linea_credito_total: string;
+  cuentas_excedidas: number;
+}
+
 interface DashboardData {
   kpis: {
     clientes_activos: number;
     cuentas_activas: number;
-    cartera_por_cobrar: string;
-    linea_credito_total: string;
     alertas_activas: number;
     cuentas_excedidas: number;
   };
+  kpisPorMoneda: KpiMoneda[];
   alertasRecientes: Array<{
     id_alerta: number;
     id_cuenta: number;
@@ -42,6 +52,9 @@ interface DashboardData {
   }>;
   resumenSegmentos: Array<{
     segmento: string;
+    id_tipo_moneda: number;
+    moneda_codigo: string;
+    moneda_simbolo: string;
     cantidad_clientes: number;
     saldo_total: string;
   }>;
@@ -52,13 +65,25 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [monedaSel, setMonedaSel] = useState<number | null>(null);
 
   const cargarDashboard = () => {
     setLoading(true);
     setError('');
     api
       .get<DashboardData>('/dashboard')
-      .then((res) => setData(res.data))
+      .then((res) => {
+        setData(res.data);
+        if (
+          res.data.kpisPorMoneda?.length > 0 &&
+          monedaSel === null
+        ) {
+          const pen =
+            res.data.kpisPorMoneda.find((m) => m.moneda_codigo === 'PEN') ||
+            res.data.kpisPorMoneda[0];
+          setMonedaSel(pen.id_tipo_moneda);
+        }
+      })
       .catch(() => setError('No se pudo cargar el resumen del dashboard.'))
       .finally(() => setLoading(false));
   };
@@ -93,16 +118,44 @@ export default function DashboardPage() {
   if (!data) return null;
 
   const { kpis } = data;
+  const kpiMonedaActual =
+    data.kpisPorMoneda?.find((m) => m.id_tipo_moneda === monedaSel) ||
+    data.kpisPorMoneda?.[0];
+  const segmentosMoneda = data.resumenSegmentos.filter((s) =>
+    kpiMonedaActual
+      ? s.id_tipo_moneda === kpiMonedaActual.id_tipo_moneda
+      : true
+  );
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold text-slate-900">
-          Resumen Ejecutivo de Cartera
-        </h2>
-        <p className="text-sm text-slate-500">
-          Estado en línea de clientes, cuentas corrientes y alertas de crédito.
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-900">
+            Resumen Ejecutivo de Cartera
+          </h2>
+          <p className="text-sm text-slate-500">
+            Estado en línea de clientes, cuentas corrientes y alertas de crédito.
+          </p>
+        </div>
+
+        {data.kpisPorMoneda?.length > 1 && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-slate-600">Moneda:</span>
+            <select
+              aria-label="Moneda de resumen ejecutivo"
+              value={kpiMonedaActual?.id_tipo_moneda ?? ''}
+              onChange={(e) => setMonedaSel(Number(e.target.value))}
+              className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm bg-white font-medium text-slate-800"
+            >
+              {data.kpisPorMoneda.map((m) => (
+                <option key={m.id_tipo_moneda} value={m.id_tipo_moneda}>
+                  {m.moneda_codigo} ({m.moneda_simbolo})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* KPIs */}
@@ -122,14 +175,23 @@ export default function DashboardPage() {
 
         <div className="bg-white rounded-xl border border-slate-200 p-5">
           <div className="flex items-center justify-between text-slate-500 text-xs font-medium mb-2">
-            <span>CARTERA POR COBRAR</span>
+            <span>
+              CARTERA POR COBRAR ({kpiMonedaActual?.moneda_codigo || 'PEN'})
+            </span>
             <Wallet className="w-4 h-4 text-emerald-600" />
           </div>
           <p className="text-2xl font-bold text-slate-900">
-            {formatMoney(kpis.cartera_por_cobrar)}
+            {formatMoney(
+              kpiMonedaActual?.cartera_por_cobrar || 0,
+              kpiMonedaActual?.moneda_simbolo || 'S/'
+            )}
           </p>
           <p className="text-xs text-slate-500 mt-1">
-            Línea total: {formatMoney(kpis.linea_credito_total)}
+            Línea total:{' '}
+            {formatMoney(
+              kpiMonedaActual?.linea_credito_total || 0,
+              kpiMonedaActual?.moneda_simbolo || 'S/'
+            )}
           </p>
         </div>
 
@@ -148,20 +210,22 @@ export default function DashboardPage() {
 
         <div className="bg-white rounded-xl border border-slate-200 p-5">
           <div className="flex items-center justify-between text-slate-500 text-xs font-medium mb-2">
-            <span>SEGMENTOS</span>
+            <span>
+              SEGMENTOS ({kpiMonedaActual?.moneda_codigo || 'PEN'})
+            </span>
             <TrendingUp className="w-4 h-4 text-sky-600" />
           </div>
           <div className="space-y-1 mt-1">
-            {data.resumenSegmentos.map((s) => (
+            {segmentosMoneda.map((s) => (
               <div
-                key={s.segmento}
+                key={`${s.segmento}-${s.moneda_codigo}`}
                 className="flex justify-between text-xs text-slate-700"
               >
                 <span>
                   {s.segmento} ({s.cantidad_clientes})
                 </span>
                 <span className="font-semibold">
-                  {formatMoney(s.saldo_total)}
+                  {formatMoney(s.saldo_total, s.moneda_simbolo)}
                 </span>
               </div>
             ))}

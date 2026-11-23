@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Search, Pencil, AlertCircle } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Plus, Search, Pencil, AlertCircle, Wallet } from 'lucide-react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { Cliente, TipoPersona } from '../types';
@@ -16,6 +17,16 @@ export default function ClientesPage() {
   const [editando, setEditando] = useState<Cliente | null>(null);
   const [error, setError] = useState('');
 
+  // Modal abrir cuenta adicional (PEN/USD)
+  const [modalCuentaCliente, setModalCuentaCliente] = useState<Cliente | null>(
+    null
+  );
+  const [cuentaForm, setCuentaForm] = useState({
+    id_tipo_moneda: '',
+    linea_credito: '',
+  });
+  const [cuentaError, setCuentaError] = useState('');
+
   const [form, setForm] = useState({
     tipo_persona: 'JURIDICA' as TipoPersona,
     id_tipo_documento: '',
@@ -24,6 +35,7 @@ export default function ClientesPage() {
     razon_social: '',
     nombre_comercial: '',
     id_segmento: '',
+    id_tipo_moneda: '',
     email: '',
     telefono: '',
     direccion: '',
@@ -57,6 +69,9 @@ export default function ClientesPage() {
     setEditando(null);
     const primerDoc = catalogos?.tiposDocumento[0]?.id_tipo_documento || '';
     const primerSeg = catalogos?.segmentos[0];
+    const monedaPen =
+      catalogos?.tiposMoneda.find((m) => m.codigo === 'PEN') ||
+      catalogos?.tiposMoneda[0];
     setForm({
       tipo_persona: 'JURIDICA',
       id_tipo_documento: String(primerDoc),
@@ -65,6 +80,7 @@ export default function ClientesPage() {
       razon_social: '',
       nombre_comercial: '',
       id_segmento: primerSeg ? String(primerSeg.id_segmento) : '',
+      id_tipo_moneda: monedaPen ? String(monedaPen.id_tipo_moneda) : '',
       email: '',
       telefono: '',
       direccion: '',
@@ -77,6 +93,7 @@ export default function ClientesPage() {
 
   const abrirEditar = (c: Cliente) => {
     setEditando(c);
+    const primeraCuenta = c.cuentas_resumen?.[0];
     setForm({
       tipo_persona: c.tipo_persona,
       id_tipo_documento: String(c.id_tipo_documento),
@@ -85,14 +102,36 @@ export default function ClientesPage() {
       razon_social: c.razon_social || '',
       nombre_comercial: c.nombre_comercial || '',
       id_segmento: String(c.id_segmento),
+      id_tipo_moneda: primeraCuenta
+        ? String(primeraCuenta.id_tipo_moneda)
+        : '',
       email: c.email || '',
       telefono: c.telefono || '',
       direccion: c.direccion || '',
-      linea_credito: c.linea_credito_total,
+      linea_credito: primeraCuenta ? primeraCuenta.linea_credito : '0',
       estado: c.estado,
     });
     setError('');
     setModalOpen(true);
+  };
+
+  const abrirModalNuevaCuenta = (c: Cliente) => {
+    const monedaFaltante =
+      catalogos?.tiposMoneda.find(
+        (m) =>
+          !c.cuentas_resumen?.some((cr) => cr.id_tipo_moneda === m.id_tipo_moneda)
+      ) || catalogos?.tiposMoneda[0];
+    const seg = catalogos?.segmentos.find(
+      (s) => s.id_segmento === c.id_segmento
+    );
+    setModalCuentaCliente(c);
+    setCuentaForm({
+      id_tipo_moneda: monedaFaltante
+        ? String(monedaFaltante.id_tipo_moneda)
+        : '',
+      linea_credito: seg ? seg.linea_credito_sugerida : '5000',
+    });
+    setCuentaError('');
   };
 
   const handleSegmentoChange = (segId: string) => {
@@ -121,6 +160,9 @@ export default function ClientesPage() {
           form.tipo_persona === 'JURIDICA' ? form.razon_social : null,
         nombre_comercial: form.nombre_comercial || null,
         id_segmento: Number(form.id_segmento),
+        id_tipo_moneda: form.id_tipo_moneda
+          ? Number(form.id_tipo_moneda)
+          : undefined,
         email: form.email || null,
         telefono: form.telefono || null,
         direccion: form.direccion || null,
@@ -142,6 +184,32 @@ export default function ClientesPage() {
     }
   };
 
+  const handleAbrirCuenta = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!modalCuentaCliente) return;
+    setCuentaError('');
+    try {
+      await api.post(`/clientes/${modalCuentaCliente.id_cliente}/cuentas`, {
+        id_tipo_moneda: Number(cuentaForm.id_tipo_moneda),
+        linea_credito: Number(cuentaForm.linea_credito || 0),
+      });
+      setModalCuentaCliente(null);
+      await cargarClientes();
+    } catch (err: unknown) {
+      setCuentaError(
+        (err as { response?: { data?: { error?: string } } })?.response?.data
+          ?.error || 'No se pudo abrir la cuenta.'
+      );
+    }
+  };
+
+  const monedaFormSeleccionada = catalogos?.tiposMoneda.find(
+    (m) => String(m.id_tipo_moneda) === form.id_tipo_moneda
+  );
+  const monedaCuentaSeleccionada = catalogos?.tiposMoneda.find(
+    (m) => String(m.id_tipo_moneda) === cuentaForm.id_tipo_moneda
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -151,7 +219,7 @@ export default function ClientesPage() {
           </h2>
           <p className="text-sm text-slate-500">
             Registro de personas naturales y jurídicas, segmento comercial y
-            línea de crédito.
+            cuentas por moneda (PEN / USD).
           </p>
         </div>
         {puedeEditar && (
@@ -264,18 +332,40 @@ export default function ClientesPage() {
                       {c.segmento_nombre}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-right font-medium">
-                    {formatMoney(c.linea_credito_total)}
+                  <td className="px-4 py-3 text-right font-medium space-y-1">
+                    {c.cuentas_resumen?.length ? (
+                      c.cuentas_resumen.map((cc) => (
+                        <div key={cc.id_cuenta} className="whitespace-nowrap">
+                          <span className="text-[11px] text-slate-400 mr-1">
+                            {cc.moneda_codigo}
+                          </span>
+                          {formatMoney(cc.linea_credito, cc.moneda_simbolo)}
+                        </div>
+                      ))
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
                   </td>
-                  <td className="px-4 py-3 text-right">
-                    <span
-                      className={`font-semibold inline-flex items-center gap-1 ${
-                        c.excede_linea ? 'text-red-600' : 'text-slate-900'
-                      }`}
-                    >
-                      {c.excede_linea && <AlertCircle className="w-3.5 h-3.5" />}
-                      {formatMoney(c.saldo_total)}
-                    </span>
+                  <td className="px-4 py-3 text-right space-y-1">
+                    {c.cuentas_resumen?.length ? (
+                      c.cuentas_resumen.map((cc) => (
+                        <div key={cc.id_cuenta} className="whitespace-nowrap">
+                          <Link
+                            to={`/cuentas/${cc.id_cuenta}`}
+                            className={`font-semibold inline-flex items-center gap-1 hover:underline ${
+                              cc.excede_linea ? 'text-red-600' : 'text-slate-900'
+                            }`}
+                          >
+                            {cc.excede_linea && (
+                              <AlertCircle className="w-3.5 h-3.5" />
+                            )}
+                            {formatMoney(cc.saldo_actual, cc.moneda_simbolo)}
+                          </Link>
+                        </div>
+                      ))
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <span
@@ -291,7 +381,15 @@ export default function ClientesPage() {
                     </span>
                   </td>
                   {puedeEditar && (
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-4 py-3 text-right whitespace-nowrap space-x-1">
+                      <button
+                        onClick={() => abrirModalNuevaCuenta(c)}
+                        className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded cursor-pointer"
+                        title="Abrir cuenta en otra moneda"
+                      >
+                        <Wallet className="w-3.5 h-3.5" />
+                        Abrir cuenta
+                      </button>
                       <button
                         onClick={() => abrirEditar(c)}
                         className="p-1.5 text-slate-500 hover:text-indigo-600 rounded cursor-pointer"
@@ -308,7 +406,7 @@ export default function ClientesPage() {
         </table>
       </div>
 
-      {/* Modal Crear / Editar */}
+      {/* Modal Crear / Editar Cliente */}
       {modalOpen && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
@@ -419,7 +517,7 @@ export default function ClientesPage() {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-slate-700 mb-1">
                     Segmento
@@ -436,9 +534,31 @@ export default function ClientesPage() {
                     ))}
                   </select>
                 </div>
-                <div>
+
+                {!editando && (
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 mb-1">
+                      Moneda Cuenta Inicial
+                    </label>
+                    <select
+                      value={form.id_tipo_moneda}
+                      onChange={(e) =>
+                        setForm({ ...form, id_tipo_moneda: e.target.value })
+                      }
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+                    >
+                      {catalogos?.tiposMoneda.map((m) => (
+                        <option key={m.id_tipo_moneda} value={m.id_tipo_moneda}>
+                          {m.codigo} ({m.simbolo})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div className={editando ? 'sm:col-span-2' : ''}>
                   <label className="block text-xs font-medium text-slate-700 mb-1">
-                    Línea de Crédito (S/)
+                    Línea de Crédito ({monedaFormSeleccionada?.simbolo || 'S/'})
                   </label>
                   <input
                     type="number"
@@ -535,6 +655,85 @@ export default function ClientesPage() {
                   className="px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg cursor-pointer"
                 >
                   Guardar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Abrir Cuenta en Otra Moneda */}
+      {modalCuentaCliente && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl max-w-md w-full p-6 space-y-4">
+            <h3 className="text-lg font-bold text-slate-900">
+              Abrir Cuenta Corriente
+            </h3>
+            <p className="text-xs text-slate-600">
+              Cliente: <strong>{modalCuentaCliente.nombre_display}</strong>
+            </p>
+            {cuentaError && (
+              <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg">
+                {cuentaError}
+              </div>
+            )}
+            <form onSubmit={handleAbrirCuenta} className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Moneda
+                </label>
+                <select
+                  required
+                  value={cuentaForm.id_tipo_moneda}
+                  onChange={(e) =>
+                    setCuentaForm({
+                      ...cuentaForm,
+                      id_tipo_moneda: e.target.value,
+                    })
+                  }
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+                >
+                  {catalogos?.tiposMoneda.map((m) => (
+                    <option key={m.id_tipo_moneda} value={m.id_tipo_moneda}>
+                      {m.codigo} - {m.nombre} ({m.simbolo})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Línea de Crédito ({monedaCuentaSeleccionada?.simbolo || 'S/'})
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  required
+                  value={cuentaForm.linea_credito}
+                  onChange={(e) =>
+                    setCuentaForm({
+                      ...cuentaForm,
+                      linea_credito: e.target.value,
+                    })
+                  }
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setModalCuentaCliente(null)}
+                  className="px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg cursor-pointer"
+                >
+                  Abrir Cuenta
                 </button>
               </div>
             </form>

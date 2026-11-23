@@ -3,6 +3,7 @@ import {
   getClienteById,
   getClientes,
   postCliente,
+  postCuentaCliente,
   putCliente,
 } from '../controllers/clientes.controller';
 import { authenticateToken, authorizeRoles } from '../middlewares/auth';
@@ -13,6 +14,7 @@ router.use(authenticateToken);
 router.get('/', getClientes);
 router.get('/:id', getClienteById);
 router.post('/', authorizeRoles('ADMIN', 'ANALISTA'), postCliente);
+router.post('/:id/cuentas', authorizeRoles('ADMIN', 'ANALISTA'), postCuentaCliente);
 router.put('/:id', authorizeRoles('ADMIN', 'ANALISTA'), putCliente);
 
 export default router;
