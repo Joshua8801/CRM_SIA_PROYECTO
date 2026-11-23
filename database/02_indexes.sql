@@ -29,13 +29,13 @@ CREATE INDEX idx_trs_apli_cargo
 CREATE INDEX idx_trs_apli_abono
     ON trs_aplicacion_pago (id_movimiento_abono);
 
--- Alertas de crédito: bandeja por cuenta/estado y unicidad de alerta activa por tipo
+-- Alertas de crédito: bandeja por cuenta/estado y unicidad de alerta abierta por tipo
 CREATE INDEX idx_trs_alerta_cuenta_estado
     ON trs_alerta_credito (id_cuenta, estado);
 
 CREATE UNIQUE INDEX uq_trs_alerta_activa_unica
     ON trs_alerta_credito (id_cuenta, tipo_alerta)
-    WHERE estado = 'ACTIVA';
+    WHERE estado IN ('ACTIVA', 'REVISADA');
 
 -- Interacciones: historial cronológico por cliente
 CREATE INDEX idx_trs_interaccion_cliente_fecha

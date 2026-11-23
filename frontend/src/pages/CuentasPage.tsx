@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Search, Eye, AlertTriangle } from 'lucide-react';
 import { api } from '../services/api';
 import { CuentaCorriente } from '../types';
 import { formatMoney } from '../utils/format';
 
 export default function CuentasPage() {
+  const [params] = useSearchParams();
+  const esReporte = params.get('vista') === 'estado';
+  const vista = esReporte ? 'estado' : 'movimientos';
   const [cuentas, setCuentas] = useState<CuentaCorriente[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -37,11 +40,12 @@ export default function CuentasPage() {
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-slate-900">
-          Cuentas Corrientes
+          {esReporte ? 'Estado de cuenta' : 'Registro de movimientos'}
         </h2>
         <p className="text-sm text-slate-500">
-          Consulta saldos en línea, registra cargos/abonos e imprime estados de
-          cuenta por período.
+          {esReporte
+            ? 'Selecciona una cuenta para consultar e imprimir su estado por período.'
+            : 'Selecciona una cuenta para registrar cargos o abonos.'}
         </p>
       </div>
 
@@ -155,11 +159,11 @@ export default function CuentasPage() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <Link
-                      to={`/cuentas/${cc.id_cuenta}`}
+                      to={`/cuentas/${cc.id_cuenta}?vista=${vista}`}
                       className="inline-flex items-center gap-1 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-medium"
                     >
                       <Eye className="w-3.5 h-3.5" />
-                      Ver / Estado
+                      {esReporte ? 'Ver estado de cuenta' : 'Ver movimientos'}
                     </Link>
                   </td>
                 </tr>

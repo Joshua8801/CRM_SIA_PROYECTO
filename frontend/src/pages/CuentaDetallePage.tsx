@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useSearchParams, Link } from 'react-router-dom';
 import {
   ArrowLeft,
   Plus,
@@ -34,6 +34,11 @@ interface EstadoCuentaResp {
       cargo: number;
       abono: number;
       saldo_acumulado: number;
+      aplicaciones: Array<{
+        id_cargo: number;
+        documento: string | null;
+        monto: string;
+      }>;
     }
   >;
 }
@@ -41,7 +46,13 @@ interface EstadoCuentaResp {
 export default function CuentaDetallePage() {
   const { id } = useParams<{ id: string }>();
   const { catalogos, usuario } = useAuth();
-  const [tab, setTab] = useState<'movimientos' | 'estado'>('movimientos');
+  const [params, setParams] = useSearchParams();
+  const tab = params.get('vista') === 'estado' ? 'estado' : 'movimientos';
+  const setTab = (vista: 'movimientos' | 'estado') => {
+    const next = new URLSearchParams(params);
+    next.set('vista', vista);
+    setParams(next);
+  };
   const [cuenta, setCuenta] = useState<CuentaCorriente | null>(null);
   const [movimientos, setMovimientos] = useState<MovimientoCuenta[]>([]);
   const [loading, setLoading] = useState(true);
@@ -167,6 +178,10 @@ export default function CuentaDetallePage() {
     (t) => String(t.id_tipo_movimiento) === movForm.id_tipo_movimiento
   );
 
+  const requiereComprobante = tipoSeleccionado && [
+    'CARGO_FACTURA', 'CARGO_NOTA_DEB', 'ABONO_NOTA_CRED',
+  ].includes(tipoSeleccionado.codigo);
+
   const handleRegistrarMovimiento = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -176,7 +191,9 @@ export default function CuentaDetallePage() {
         id_tipo_movimiento: Number(movForm.id_tipo_movimiento),
         numero_documento_ref: movForm.numero_documento_ref || null,
         fecha_movimiento: movForm.fecha_movimiento,
-        fecha_vencimiento: movForm.fecha_vencimiento || null,
+        fecha_vencimiento: tipoSeleccionado?.requiere_vencimiento
+          ? movForm.fecha_vencimiento || null
+          : null,
         monto: Number(movForm.monto),
         glosa: movForm.glosa,
         id_cargo_a_aplicar: movForm.id_cargo_a_aplicar
@@ -236,7 +253,7 @@ export default function CuentaDetallePage() {
       <div className="no-print flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <Link
-            to="/cuentas"
+            to={`/cuentas?vista=${tab}`}
             className="p-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -583,6 +600,15 @@ export default function CuentaDetallePage() {
                         <td className="px-3 py-2">
                           <span className="font-medium">{m.tipo_nombre}</span> —{' '}
                           {m.glosa}
+                          {m.aplicaciones.length > 0 && (
+                            <ul className="mt-1 space-y-0.5 text-slate-600">
+                              {m.aplicaciones.map(({ id_cargo, documento, monto }) => (
+                                <li key={id_cargo}>
+                                  Aplicado a {documento || `cargo #${id_cargo}`} ({formatMoney(monto, estadoCuenta.cuenta.moneda_simbolo)})
+                                </li>
+                              ))}
+                            </ul>
+                          )}
                         </td>
                         <td className="px-3 py-2 text-right">
                           {m.cargo > 0
@@ -677,6 +703,8 @@ export default function CuentaDetallePage() {
                   </label>
                   <input
                     type="text"
+                    required={requiereComprobante}
+                    maxLength={40}
                     value={movForm.numero_documento_ref}
                     onChange={(e) =>
                       setMovForm({
@@ -715,6 +743,8 @@ export default function CuentaDetallePage() {
                     </label>
                     <input
                       type="date"
+                      required
+                      min={movForm.fecha_movimiento || undefined}
                       value={movForm.fecha_vencimiento}
                       onChange={(e) =>
                         setMovForm({

@@ -29,6 +29,16 @@ async function obtenerEstadoId(
   return res.rows[0].id_estado_movimiento;
 }
 
+const tiposComprobante = new Set(['CARGO_FACTURA', 'CARGO_NOTA_DEB', 'ABONO_NOTA_CRED']);
+
+function esFechaValida(fecha: string): boolean {
+  if (typeof fecha !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(fecha) || fecha.startsWith('0000')) {
+    return false;
+  }
+  const valor = new Date(fecha + 'T00:00:00Z');
+  return Number.isFinite(valor.getTime()) && valor.toISOString().slice(0, 10) === fecha;
+}
+
 export async function registrarMovimiento(
   input: RegistrarMovimientoInput,
   idUsuario: number
@@ -64,9 +74,10 @@ export async function registrarMovimiento(
     const tipoRes = await client.query<{
       id_tipo_movimiento: number;
       naturaleza: 'C' | 'A';
+      codigo: string;
       requiere_vencimiento: boolean;
     }>(
-      `SELECT id_tipo_movimiento, naturaleza, requiere_vencimiento
+      `SELECT id_tipo_movimiento, naturaleza, codigo, requiere_vencimiento
        FROM tipo_movimiento_cuenta
        WHERE id_tipo_movimiento = $1 AND activo = TRUE`,
       [input.id_tipo_movimiento]
@@ -76,9 +87,26 @@ export async function registrarMovimiento(
     }
     const tipo = tipoRes.rows[0];
 
+    const fechaMov = input.fecha_movimiento || new Date().toISOString().slice(0, 10);
+    const fechaVencimiento = input.fecha_vencimiento || null;
+    const documento = input.numero_documento_ref?.trim() || null;
+
+    if (!esFechaValida(fechaMov)) {
+      throw new AppError('La fecha del movimiento no es válida.', 400);
+    }
+    if (tipo.requiere_vencimiento && !fechaVencimiento) {
+      throw new AppError('La fecha de vencimiento es obligatoria para este movimiento.', 400);
+    }
+    if (fechaVencimiento && !esFechaValida(fechaVencimiento)) {
+      throw new AppError('La fecha de vencimiento no es válida.', 400);
+    }
+    if (fechaVencimiento && fechaVencimiento < fechaMov) {
+      throw new AppError('El vencimiento no puede ser anterior a la fecha del movimiento.', 400);
+    }
+    if (tiposComprobante.has(tipo.codigo) && !documento) {
+      throw new AppError('El número de comprobante es obligatorio para este movimiento.', 400);
+    }
     const idEstadoInicial = await obtenerEstadoId(client, 'PENDIENTE');
-    const fechaMov =
-      input.fecha_movimiento || new Date().toISOString().slice(0, 10);
 
     const movRes = await client.query(
       `INSERT INTO trs_movimiento_cuenta
@@ -90,14 +118,19 @@ export async function registrarMovimiento(
         input.id_cuenta,
         input.id_tipo_movimiento,
         idEstadoInicial,
-        input.numero_documento_ref?.trim() || null,
+        documento,
         fechaMov,
-        input.fecha_vencimiento || null,
+        fechaVencimiento,
         monto,
         input.glosa.trim(),
         idUsuario,
       ]
-    );
+    ).catch((error: { code?: string; constraint?: string }) => {
+      if (error.code === '23505' && error.constraint === 'uq_trs_comprobante_vigente') {
+        throw new AppError('El comprobante ya existe en esta cuenta para el tipo seleccionado.', 409);
+      }
+      throw error;
+    });
     const movimiento = movRes.rows[0];
 
     // Si es abono y se indicó un cargo específico, aplicar hasta el saldo pendiente del cargo
@@ -305,6 +338,13 @@ export async function anularMovimiento(
   idUsuario: number
 ) {
   return withTransaction(async (client) => {
+    // Mantener el mismo orden de bloqueo que al registrar un movimiento.
+    await client.query(
+      `SELECT cc.id_cuenta FROM mae_cuenta_corriente cc
+       JOIN trs_movimiento_cuenta m ON m.id_cuenta = cc.id_cuenta
+       WHERE m.id_movimiento = $1 FOR UPDATE OF cc`,
+      [idMovimiento]
+    );
     const movRes = await client.query<{
       id_movimiento: number;
       id_cuenta: number;
@@ -316,7 +356,7 @@ export async function anularMovimiento(
        FROM trs_movimiento_cuenta m
        JOIN tipo_movimiento_cuenta t ON t.id_tipo_movimiento = m.id_tipo_movimiento
        JOIN tipo_estado_movimiento est ON est.id_estado_movimiento = m.id_estado_movimiento
-       WHERE m.id_movimiento = $1 FOR UPDATE`,
+       WHERE m.id_movimiento = $1 FOR UPDATE OF m`,
       [idMovimiento]
     );
 

@@ -7,7 +7,7 @@ import { registrarAuditoria } from '../utils/audit';
  * Evalúa la línea de crédito de una cuenta usando el saldo calculado (vw_cuenta_saldo).
  * - Si saldo_actual > linea_credito: genera o actualiza alerta ACTIVA EXCESO_LINEA.
  * - Si saldo_actual >= 85% de linea_credito (y <= linea_credito): genera alerta ACTIVA PROXIMO_LIMITE.
- * - Evita duplicados activos gracias a la verificación + índice único parcial uq_trs_alerta_activa_unica.
+ * - Evita duplicados abiertos gracias a la verificación + índice único parcial uq_trs_alerta_activa_unica.
  * - Conserva el historial de alertas anteriores marcándolas como RESUELTA cuando corresponde.
  */
 export async function evaluarAlertasCuenta(
@@ -36,13 +36,13 @@ export async function evaluarAlertasCuenta(
 
   if (saldo > linea) {
     const exceso = Number((saldo - linea).toFixed(2));
-    const activaExceso = await client.query<{ id_alerta: number }>(
+    const abiertaExceso = await client.query<{ id_alerta: number }>(
       `SELECT id_alerta FROM trs_alerta_credito
-       WHERE id_cuenta = $1 AND tipo_alerta = 'EXCESO_LINEA' AND estado = 'ACTIVA'`,
+       WHERE id_cuenta = $1 AND tipo_alerta = 'EXCESO_LINEA' AND estado IN ('ACTIVA', 'REVISADA') FOR UPDATE`,
       [idCuenta]
     );
 
-    if (activaExceso.rows.length === 0) {
+    if (abiertaExceso.rows.length === 0) {
       const ins = await client.query(
         `INSERT INTO trs_alerta_credito
           (id_cuenta, id_movimiento_origen, tipo_alerta, linea_credito_momento, saldo_momento, monto_excedido, mensaje)
@@ -79,7 +79,7 @@ export async function evaluarAlertasCuenta(
           exceso,
           idMovimientoOrigen,
           `Cuenta ${cuenta.numero_cuenta} excede su línea de crédito por ${exceso.toFixed(2)}.`,
-          activaExceso.rows[0].id_alerta,
+          abiertaExceso.rows[0].id_alerta,
         ]
       );
     }
@@ -88,28 +88,28 @@ export async function evaluarAlertasCuenta(
     await client.query(
       `UPDATE trs_alerta_credito
        SET estado = 'RESUELTA', fecha_resolucion = NOW(), id_usuario_resolucion = $1
-       WHERE id_cuenta = $2 AND tipo_alerta = 'PROXIMO_LIMITE' AND estado = 'ACTIVA'`,
+       WHERE id_cuenta = $2 AND tipo_alerta = 'PROXIMO_LIMITE' AND estado IN ('ACTIVA', 'REVISADA')`,
       [idUsuario, idCuenta]
     );
     return;
   }
 
-  // Si saldo <= linea: resolver alertas EXCESO_LINEA activas
+  // Si saldo <= linea: resolver alertas EXCESO_LINEA abiertas
   await client.query(
     `UPDATE trs_alerta_credito
      SET estado = 'RESUELTA', fecha_resolucion = NOW(), id_usuario_resolucion = $1
-     WHERE id_cuenta = $2 AND tipo_alerta = 'EXCESO_LINEA' AND estado = 'ACTIVA'`,
+     WHERE id_cuenta = $2 AND tipo_alerta = 'EXCESO_LINEA' AND estado IN ('ACTIVA', 'REVISADA')`,
     [idUsuario, idCuenta]
   );
 
   // Evaluar umbral preventivo del 85%
   if (linea > 0 && saldo >= linea * 0.85) {
-    const activaProx = await client.query(
+    const abiertaProx = await client.query(
       `SELECT id_alerta FROM trs_alerta_credito
-       WHERE id_cuenta = $1 AND tipo_alerta = 'PROXIMO_LIMITE' AND estado = 'ACTIVA'`,
+       WHERE id_cuenta = $1 AND tipo_alerta = 'PROXIMO_LIMITE' AND estado IN ('ACTIVA', 'REVISADA') FOR UPDATE`,
       [idCuenta]
     );
-    if (activaProx.rows.length === 0) {
+    if (abiertaProx.rows.length === 0) {
       const porcentaje = ((saldo / linea) * 100).toFixed(1);
       const ins = await client.query(
         `INSERT INTO trs_alerta_credito
@@ -136,7 +136,7 @@ export async function evaluarAlertasCuenta(
     await client.query(
       `UPDATE trs_alerta_credito
        SET estado = 'RESUELTA', fecha_resolucion = NOW(), id_usuario_resolucion = $1
-       WHERE id_cuenta = $2 AND tipo_alerta = 'PROXIMO_LIMITE' AND estado = 'ACTIVA'`,
+       WHERE id_cuenta = $2 AND tipo_alerta = 'PROXIMO_LIMITE' AND estado IN ('ACTIVA', 'REVISADA')`,
       [idUsuario, idCuenta]
     );
   }
@@ -202,6 +202,10 @@ export async function actualizarEstadoAlerta(
     );
     if (prev.rows.length === 0) {
       throw new AppError('Alerta no encontrada.', 404);
+    }
+
+    if (prev.rows[0].estado === 'RESUELTA') {
+      throw new AppError('La alerta ya está resuelta.', 409);
     }
 
     const updated = await client.query(

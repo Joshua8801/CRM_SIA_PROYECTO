@@ -5,11 +5,12 @@ dotenv.config();
 import { pool } from '../src/config/db';
 import { crearCliente } from '../src/services/clientes.service';
 import { obtenerCuentaPorId, obtenerEstadoCuenta } from '../src/services/cuentas.service';
-import { aplicarPago, registrarMovimiento } from '../src/services/movimientos.service';
+import { aplicarPago, anularMovimiento, registrarMovimiento } from '../src/services/movimientos.service';
+import { actualizarEstadoAlerta } from '../src/services/alertas.service';
 import { registrarConciliacion } from '../src/services/conciliaciones.service';
 
 async function run() {
-  console.log('=== Verificación Funcional CRM Cuentas Corrientes T3 (13 Casos) ===');
+  console.log('=== Verificación Funcional CRM Cuentas Corrientes T3 ===');
   const sufijo = String(Date.now()).slice(-6);
   const idUsuario = 1;
 
@@ -59,6 +60,7 @@ async function run() {
       id_tipo_movimiento: 1, // CARGO_FACTURA
       numero_documento_ref: `F-TEST-${sufijo}`,
       fecha_movimiento: hoy,
+      fecha_vencimiento: hoy,
       monto: 850,
       glosa: 'Cargo de prueba 1',
     },
@@ -83,6 +85,7 @@ async function run() {
       id_tipo_movimiento: 1,
       numero_documento_ref: `F-TEST2-${sufijo}`,
       fecha_movimiento: hoy,
+      fecha_vencimiento: hoy,
       monto: 300,
       glosa: 'Cargo de prueba 2 (exceso)',
     },
@@ -201,6 +204,8 @@ async function run() {
       id_cuenta: idCuentaConc,
       id_tipo_movimiento: 1,
       fecha_movimiento: ayer,
+      fecha_vencimiento: ayer,
+      numero_documento_ref: 'F-APERTURA',
       monto: 4500,
       glosa: 'Saldo inicial período',
     },
@@ -211,6 +216,8 @@ async function run() {
       id_cuenta: idCuentaConc,
       id_tipo_movimiento: 1,
       fecha_movimiento: hoy,
+      fecha_vencimiento: hoy,
+      numero_documento_ref: 'F-PERIODO',
       monto: 1380,
       glosa: 'Cargos período',
     },
@@ -285,6 +292,100 @@ async function run() {
     /debe ser igual a Saldo inicial \+ Cargos - Abonos/i
   );
   console.log('✓ 14c. Rechazo de saldo final manual inconsistente OK');
+
+  const alertaCliente = await crearCliente({
+    tipo_persona: 'JURIDICA',
+    id_tipo_documento: 1,
+    numero_documento: `20777${sufijo}`,
+    razon_social: `Empresa alerta ${sufijo}`,
+    id_segmento: 2,
+    linea_credito: 15000,
+  }, idUsuario);
+  const cuentaAlerta = alertaCliente.cuenta_inicial.id_cuenta;
+  const factura = {
+    id_cuenta: cuentaAlerta,
+    id_tipo_movimiento: 1,
+    numero_documento_ref: 'F001-016800',
+    fecha_movimiento: hoy,
+    fecha_vencimiento: hoy,
+    monto: 16800,
+    glosa: 'Factura de prueba',
+  };
+
+  await assert.rejects(
+    () => registrarMovimiento({ ...factura, fecha_vencimiento: null }, idUsuario),
+    /vencimiento es obligatoria/
+  );
+  await assert.rejects(
+    () => registrarMovimiento({ ...factura, fecha_vencimiento: ayer }, idUsuario),
+    /anterior a la fecha/
+  );
+  await assert.rejects(
+    () => registrarMovimiento({ ...factura, fecha_vencimiento: '2026-02-30' }, idUsuario),
+    /vencimiento no es válida/
+  );
+
+  const registros = await Promise.allSettled([
+    registrarMovimiento(factura, idUsuario),
+    registrarMovimiento({ ...factura, numero_documento_ref: ' f001 - 016800 ' }, idUsuario),
+  ]);
+  assert.equal(registros.filter((resultado) => resultado.status === 'fulfilled').length, 1);
+  const duplicado = registros.find((resultado) => resultado.status === 'rejected');
+  assert.equal(duplicado?.reason.statusCode, 409);
+  let detalleAlerta = await obtenerCuentaPorId(cuentaAlerta);
+  assert.equal(Number(detalleAlerta.cuenta.saldo_actual), 16800);
+  const alertaRevisada = detalleAlerta.alertas.find((alerta) => alerta.tipo_alerta === 'EXCESO_LINEA');
+  assert.ok(alertaRevisada);
+  await actualizarEstadoAlerta(alertaRevisada.id_alerta, 'REVISADA', idUsuario);
+
+  const registrarAbono = (monto: number) => registrarMovimiento({
+    id_cuenta: cuentaAlerta,
+    id_tipo_movimiento: 3,
+    fecha_movimiento: hoy,
+    monto,
+    glosa: 'Abono de prueba',
+  }, idUsuario);
+  const abono = await registrarAbono(2000);
+  await anularMovimiento(abono.id_movimiento, idUsuario);
+  detalleAlerta = await obtenerCuentaPorId(cuentaAlerta);
+  const nuevosExcesos = detalleAlerta.alertas.filter((alerta) => alerta.tipo_alerta === 'EXCESO_LINEA');
+  assert.equal(nuevosExcesos.length, 1);
+  const nuevoExceso = nuevosExcesos[0];
+  await actualizarEstadoAlerta(nuevoExceso.id_alerta, 'REVISADA', idUsuario);
+  const primerAbono = await registrarAbono(100);
+  detalleAlerta = await obtenerCuentaPorId(cuentaAlerta);
+  assert.deepEqual(
+    detalleAlerta.alertas.filter((a) => a.tipo_alerta === 'EXCESO_LINEA')
+      .map((a) => [a.id_alerta, a.estado, Number(a.monto_excedido)]),
+    [[nuevoExceso.id_alerta, 'REVISADA', 1700]]
+  );
+  await anularMovimiento(primerAbono.id_movimiento, idUsuario);
+  await registrarAbono(2000);
+  detalleAlerta = await obtenerCuentaPorId(cuentaAlerta);
+  assert.equal(Number(detalleAlerta.cuenta.saldo_actual), 14800);
+  assert.deepEqual(detalleAlerta.alertas.map((a) => a.tipo_alerta), ['PROXIMO_LIMITE']);
+  assert.deepEqual(
+    (await pool.query('SELECT estado FROM trs_alerta_credito WHERE id_alerta = ANY($1)', [
+      [alertaRevisada.id_alerta, nuevoExceso.id_alerta],
+    ])).rows.map((a) => a.estado),
+    ['RESUELTA', 'RESUELTA']
+  );
+
+  const anulable = await registrarMovimiento({ ...factura, numero_documento_ref: 'F-REUTILIZABLE', monto: 200 }, idUsuario);
+  await anularMovimiento(anulable.id_movimiento, idUsuario);
+  const cargo2 = await registrarMovimiento({ ...factura, numero_documento_ref: 'f-reutilizable', monto: 200 }, idUsuario);
+  const cargoPrincipal = detalleAlerta.movimientos.find((m) => m.naturaleza === 'C');
+  assert.ok(cargoPrincipal);
+  const pagoDistribuido = await registrarAbono(300);
+  await aplicarPago(pagoDistribuido.id_movimiento, cargoPrincipal.id_movimiento, 200, idUsuario);
+  await aplicarPago(pagoDistribuido.id_movimiento, cargo2.id_movimiento, 100, idUsuario);
+  const estadoDistribuido = await obtenerEstadoCuenta(cuentaAlerta, hoy, hoy);
+  assert.equal(estadoDistribuido.resumen.total_abonos, 2300);
+  const filasPago = estadoDistribuido.movimientos.filter((m) => m.id_movimiento === pagoDistribuido.id_movimiento);
+  assert.equal(filasPago.length, 1);
+  assert.equal(filasPago[0].abono, 300);
+  assert.deepEqual(filasPago[0].aplicaciones.map((a: { monto: string }) => a.monto), ['200.00', '100.00']);
+  console.log('✓ 15–17. Vencimientos, concurrencia, alertas y pago distribuido OK');
 
   console.log('=== TODAS LAS PRUEBAS APROBADAS ===');
 }

@@ -235,7 +235,20 @@ export async function obtenerEstadoCuenta(
         v.tipo_nombre,
         v.naturaleza,
         v.estado_codigo,
-        v.estado_nombre
+        v.estado_nombre,
+        COALESCE((
+          SELECT jsonb_agg(
+            jsonb_build_object(
+              'id_cargo', cargo.id_movimiento,
+              'documento', cargo.numero_documento_ref,
+              'monto', ap.monto_aplicado::text
+            ) ORDER BY ap.id_aplicacion
+          )
+          FROM trs_aplicacion_pago ap
+          JOIN trs_movimiento_cuenta cargo ON cargo.id_movimiento = ap.id_movimiento_cargo
+                                         AND cargo.id_cuenta = v.id_cuenta
+          WHERE ap.id_movimiento_abono = v.id_movimiento AND v.naturaleza = 'A'
+        ), '[]'::jsonb) AS aplicaciones
       FROM vw_movimiento_saldo v
       WHERE v.id_cuenta = $1
         AND v.fecha_movimiento BETWEEN $2::date AND $3::date
