@@ -10,6 +10,7 @@ import CuentaDetallePage from './pages/CuentaDetallePage';
 import ConciliacionPage from './pages/ConciliacionPage';
 import AlertasPage from './pages/AlertasPage';
 import InteraccionesPage from './pages/InteraccionesPage';
+import CobranzaPage from './pages/CobranzaPage';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { usuario, loading } = useAuth();
@@ -44,6 +45,7 @@ export default function App() {
             <Route path="conciliacion" element={<ConciliacionPage />} />
             <Route path="alertas" element={<AlertasPage />} />
             <Route path="interacciones" element={<InteraccionesPage />} />
+            <Route path="cobranza" element={<CobranzaPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

@@ -390,6 +390,42 @@ export async function anularMovimiento(
       [idAnulado, idMovimiento]
     );
 
+    // Si el abono anulado estaba vinculado a un compromiso de pago, revertir su cumplimiento
+    const compVinculado = await client.query<{
+      id_compromiso: number;
+      fecha_pactada: string;
+      estado: string;
+      vencido: boolean;
+    }>(
+      `SELECT id_compromiso, fecha_pactada, estado, (fecha_pactada < CURRENT_DATE) AS vencido
+       FROM trs_compromiso_pago
+       WHERE id_movimiento_abono = $1
+       FOR UPDATE`,
+      [idMovimiento]
+    );
+
+    if (compVinculado.rows.length > 0) {
+      const compPrev = compVinculado.rows[0];
+      const nuevoEstadoComp = compPrev.vencido ? 'INCUMPLIDO' : 'PENDIENTE';
+      const compUpd = await client.query(
+        `UPDATE trs_compromiso_pago
+         SET id_movimiento_abono = NULL,
+             estado = $1,
+             fecha_actualizacion = NOW()
+         WHERE id_compromiso = $2
+         RETURNING *`,
+        [nuevoEstadoComp, compPrev.id_compromiso]
+      );
+      await registrarAuditoria(client, {
+        tablaAfectada: 'trs_compromiso_pago',
+        idRegistro: compPrev.id_compromiso,
+        accion: 'UPDATE',
+        datosAnteriores: compPrev,
+        datosNuevos: compUpd.rows[0],
+        idUsuario,
+      });
+    }
+
     await evaluarAlertasCuenta(client, mov.id_cuenta, null, idUsuario);
 
     await registrarAuditoria(client, {

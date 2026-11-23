@@ -48,3 +48,14 @@ CREATE INDEX idx_trs_conciliacion_cuenta_periodo
 -- Auditoría: consultas por tabla y fecha
 CREATE INDEX idx_trs_auditoria_tabla_fecha
     ON trs_auditoria (tabla_afectada, fecha_evento DESC);
+
+-- Gestión de cobranza y compromisos de pago
+CREATE INDEX idx_trs_gestion_cuenta_estado
+    ON trs_gestion_cobranza (id_cuenta, estado, fecha_apertura DESC);
+
+CREATE INDEX idx_trs_compromiso_gestion_estado
+    ON trs_compromiso_pago (id_gestion, estado, fecha_pactada);
+
+CREATE INDEX idx_trs_interaccion_gestion
+    ON trs_interaccion_cliente (id_gestion)
+    WHERE id_gestion IS NOT NULL;

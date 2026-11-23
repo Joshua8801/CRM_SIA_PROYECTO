@@ -82,8 +82,25 @@ erDiagram
 
 ### `trs_interaccion_cliente`
 - **PK:** `id_interaccion`
-- **FK:** `id_cliente` -> `mae_cliente`, `id_tipo_interaccion` -> `tipo_interaccion`, `id_usuario` -> `mae_usuario`.
+- **FK:** `id_cliente` -> `mae_cliente`, `id_tipo_interaccion` -> `tipo_interaccion`, `id_usuario` -> `mae_usuario`, `id_gestion` -> `trs_gestion_cobranza` (opcional, permite vincular interacciones al caso de cobranza).
 - **Campos:** `fecha_interaccion`, `asunto`, `detalle`, `resultado`, `fecha_proximo_seguimiento`.
+
+### `trs_gestion_cobranza`
+- **PK:** `id_gestion`
+- **FK:** `id_cuenta` -> `mae_cuenta_corriente`, `id_usuario_responsable` -> `mae_usuario`, `id_usuario_registro` -> `mae_usuario`.
+- **Campos:** `motivo`, `estado` (`ABIERTA` | `CERRADA`), `observaciones_cierre`, `fecha_apertura`, `fecha_cierre`.
+- **Flujo y reglas:** Representa un caso de seguimiento de deuda sobre una cuenta corriente. Abrir o cerrar una gestión no altera el saldo de la cuenta. Una gestión puede agrupar múltiples interacciones y múltiples compromisos de pago.
+
+### `trs_compromiso_pago`
+- **PK:** `id_compromiso`
+- **FK:** `id_gestion` -> `trs_gestion_cobranza`, `id_movimiento_abono` -> `trs_movimiento_cuenta` (`UNIQUE`, opcional), `id_usuario_registro` -> `mae_usuario`.
+- **Campos:** `fecha_pactada`, `monto_comprometido` (`> 0`), `estado` (`PENDIENTE` | `CUMPLIDO` | `INCUMPLIDO` | `CANCELADO`), `observacion`, `fecha_registro`, `fecha_actualizacion`.
+- **Flujo y reglas:**
+  - Registrar una promesa no modifica el saldo; solo un abono efectivo modifica la cuenta corriente.
+  - Se marca `CUMPLIDO` únicamente al vincular un abono confirmado de la misma cuenta, con `fecha_movimiento <= fecha_pactada` y `monto >= monto_comprometido`. Un abono no puede vincularse a dos compromisos (`uq_trs_compromiso_abono`).
+  - Un abono parcial (`monto < monto_comprometido`) mantiene el compromiso `PENDIENTE` mientras esté dentro del plazo.
+  - Si `fecha_pactada < CURRENT_DATE` sin un abono válido vinculado, se refleja como `INCUMPLIDO`.
+  - Si un abono vinculado es anulado posteriormente, se desvincula del compromiso y su estado vuelve a `PENDIENTE` (si está en plazo) o `INCUMPLIDO` (si ya venció).
 
 ### `trs_conciliacion_cuenta`
 - **PK:** `id_conciliacion`

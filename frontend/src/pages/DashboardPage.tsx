@@ -10,6 +10,9 @@ import {
 } from 'lucide-react';
 import { api } from '../services/api';
 import { formatDate, formatMoney } from '../utils/format';
+import MonthlyMovementsChart, {
+  SerieMonedaMensual,
+} from '../components/MonthlyMovementsChart';
 
 interface DashboardData {
   kpis: {
@@ -42,30 +45,52 @@ interface DashboardData {
     cantidad_clientes: number;
     saldo_total: string;
   }>;
+  movimientosMensuales: SerieMonedaMensual[];
 }
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
+  const cargarDashboard = () => {
+    setLoading(true);
+    setError('');
     api
       .get<DashboardData>('/dashboard')
       .then((res) => setData(res.data))
+      .catch(() => setError('No se pudo cargar el resumen del dashboard.'))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    cargarDashboard();
   }, []);
 
-  if (loading) {
-    return <p className="text-sm text-slate-500">Cargando resumen...</p>;
-  }
-
-  if (!data) {
+  if (loading && !data) {
     return (
-      <p className="text-sm text-red-600">
-        No se pudo cargar el resumen del dashboard.
-      </p>
+      <div className="space-y-6">
+        <p className="text-sm text-slate-500">Cargando resumen...</p>
+        <MonthlyMovementsChart series={[]} loading={true} error="" />
+      </div>
     );
   }
+
+  if (error && !data) {
+    return (
+      <div className="space-y-6">
+        <p className="text-sm text-red-600">{error}</p>
+        <MonthlyMovementsChart
+          series={[]}
+          loading={false}
+          error={error}
+          onRetry={cargarDashboard}
+        />
+      </div>
+    );
+  }
+
+  if (!data) return null;
 
   const { kpis } = data;
 
@@ -143,6 +168,14 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Gráfica de barras agrupadas: Cargos y abonos mensuales */}
+      <MonthlyMovementsChart
+        series={data.movimientosMensuales || []}
+        loading={loading}
+        error={error}
+        onRetry={cargarDashboard}
+      />
 
       {/* Dos columnas: Alertas y Seguimientos */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

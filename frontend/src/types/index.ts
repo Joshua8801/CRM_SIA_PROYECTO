@@ -177,3 +177,40 @@ export interface ConciliacionCuenta {
   usuario_concilia: string;
   fecha_conciliacion: string;
 }
+
+export interface GestionCobranza {
+  id_gestion: number;
+  id_cuenta: number;
+  id_usuario_responsable: number;
+  motivo: string;
+  estado: 'ABIERTA' | 'CERRADA';
+  observaciones_cierre: string | null;
+  fecha_apertura: string;
+  fecha_cierre: string | null;
+  numero_cuenta: string;
+  saldo_actual: string;
+  linea_credito: string;
+  id_cliente: number;
+  cliente_nombre: string;
+  numero_documento: string;
+  moneda_codigo: string;
+  moneda_simbolo: string;
+  responsable_nombre: string;
+  interacciones_count?: number;
+  compromisos_count?: number;
+}
+
+export interface CompromisoPago {
+  id_compromiso: number;
+  id_gestion: number;
+  fecha_pactada: string;
+  monto_comprometido: string;
+  estado: 'PENDIENTE' | 'CUMPLIDO' | 'INCUMPLIDO' | 'CANCELADO';
+  estado_efectivo: 'PENDIENTE' | 'CUMPLIDO' | 'INCUMPLIDO' | 'CANCELADO';
+  observacion: string | null;
+  id_movimiento_abono: number | null;
+  abono_documento_ref: string | null;
+  abono_fecha: string | null;
+  abono_monto: string | null;
+  fecha_registro: string;
+}

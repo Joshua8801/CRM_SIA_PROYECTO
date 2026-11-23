@@ -8,6 +8,13 @@ import { obtenerCuentaPorId, obtenerEstadoCuenta } from '../src/services/cuentas
 import { aplicarPago, anularMovimiento, registrarMovimiento } from '../src/services/movimientos.service';
 import { actualizarEstadoAlerta } from '../src/services/alertas.service';
 import { registrarConciliacion } from '../src/services/conciliaciones.service';
+import {
+  abrirGestion,
+  crearCompromisoPago,
+  obtenerGestionPorId,
+  vincularAbonoACompromiso,
+} from '../src/services/cobranza.service';
+import { obtenerCargosAbonosMensuales } from '../src/services/dashboard.service';
 
 async function run() {
   console.log('=== Verificación Funcional CRM Cuentas Corrientes T3 ===');
@@ -386,6 +393,184 @@ async function run() {
   assert.equal(filasPago[0].abono, 300);
   assert.deepEqual(filasPago[0].aplicaciones.map((a: { monto: string }) => a.monto), ['200.00', '100.00']);
   console.log('✓ 15–17. Vencimientos, concurrencia, alertas y pago distribuido OK');
+
+  // 18. Gestión de cobranza y compromisos de pago
+  const cliCob = await crearCliente(
+    {
+      tipo_persona: 'NATURAL',
+      id_tipo_documento: 2,
+      numero_documento: `88${sufijo}`,
+      nombre_completo: `Cliente Cobranza ${sufijo}`,
+      id_segmento: 3,
+      linea_credito: 1000,
+    },
+    idUsuario
+  );
+  const idCuentaCob = cliCob.cuenta_inicial.id_cuenta as number;
+
+  // Cuenta debe S/ 500.00
+  await registrarMovimiento(
+    {
+      id_cuenta: idCuentaCob,
+      id_tipo_movimiento: 1,
+      numero_documento_ref: `F-COB-${sufijo}`,
+      fecha_movimiento: hoy,
+      fecha_vencimiento: hoy,
+      monto: 500,
+      glosa: 'Factura deuda inicial 500',
+    },
+    idUsuario
+  );
+
+  const gestion = await abrirGestion(
+    { id_cuenta: idCuentaCob, motivo: 'Seguimiento deuda S/ 500.00' },
+    idUsuario
+  );
+  const comp200 = await crearCompromisoPago(
+    gestion.id_gestion,
+    {
+      fecha_pactada: hoy,
+      monto_comprometido: 200,
+      observacion: 'Promesa de pago S/ 200.00',
+    },
+    idUsuario
+  );
+  // Registrar compromiso conserva saldo en S/ 500.00
+  let ctaCob = await obtenerCuentaPorId(idCuentaCob);
+  assert.equal(Number(ctaCob.cuenta.saldo_actual), 500);
+  console.log('✓ 18a. Compromiso S/ 200.00 conserva saldo en S/ 500.00 OK');
+
+  // Rechazo de abono de otra cuenta
+  await assert.rejects(
+    () => vincularAbonoACompromiso(comp200.id_compromiso, abono1.id_movimiento, idUsuario),
+    /pertenece a otra cuenta corriente/i
+  );
+  console.log('✓ 18b. Rechazo de abono de otra cuenta OK');
+
+  // Abono válido de S/ 200.00 => saldo S/ 300.00 y compromiso CUMPLIDO
+  const abono200 = await registrarMovimiento(
+    {
+      id_cuenta: idCuentaCob,
+      id_tipo_movimiento: 3,
+      numero_documento_ref: `OP-COB-${sufijo}`,
+      fecha_movimiento: hoy,
+      monto: 200,
+      glosa: 'Abono cumplimiento compromiso',
+    },
+    idUsuario
+  );
+  const compCumplido = await vincularAbonoACompromiso(
+    comp200.id_compromiso,
+    abono200.id_movimiento,
+    idUsuario
+  );
+  assert.equal(compCumplido.estado, 'CUMPLIDO');
+  ctaCob = await obtenerCuentaPorId(idCuentaCob);
+  assert.equal(Number(ctaCob.cuenta.saldo_actual), 300);
+  console.log('✓ 18c. Abono S/ 200.00 => saldo S/ 300.00 y compromiso CUMPLIDO OK');
+
+  // Anular abono vinculado => saldo vuelve a S/ 500.00 y compromiso vuelve a PENDIENTE
+  await anularMovimiento(abono200.id_movimiento, idUsuario);
+  ctaCob = await obtenerCuentaPorId(idCuentaCob);
+  assert.equal(Number(ctaCob.cuenta.saldo_actual), 500);
+  const detCob = await obtenerGestionPorId(gestion.id_gestion);
+  const compPostAnul = detCob.compromisos.find(
+    (c: { id_compromiso: number }) => c.id_compromiso === comp200.id_compromiso
+  );
+  assert.equal(compPostAnul.estado_efectivo, 'PENDIENTE');
+  assert.equal(compPostAnul.id_movimiento_abono, null);
+  console.log('✓ 18d. Anulación de abono vinculado revierte compromiso y saldo OK');
+
+  // Compromiso vencido sin pago => estado_efectivo INCUMPLIDO
+  const haceDosDiasDate = new Date();
+  haceDosDiasDate.setDate(haceDosDiasDate.getDate() - 2);
+  const fechaVencida = haceDosDiasDate.toISOString().slice(0, 10);
+  const compVencido = await crearCompromisoPago(
+    gestion.id_gestion,
+    {
+      fecha_pactada: fechaVencida,
+      monto_comprometido: 100,
+      observacion: 'Compromiso vencido de prueba',
+    },
+    idUsuario
+  );
+  const detCobVenc = await obtenerGestionPorId(gestion.id_gestion);
+  const compVencRow = detCobVenc.compromisos.find(
+    (c: { id_compromiso: number }) => c.id_compromiso === compVencido.id_compromiso
+  );
+  assert.equal(compVencRow.estado_efectivo, 'INCUMPLIDO');
+  console.log('✓ 18e. Compromiso vencido sin pago se muestra INCUMPLIDO OK');
+
+  // 19. Gráfica de cargos y abonos mensuales (6 meses, 2+ meses verificados contra PostgreSQL,
+  //     excluye anulados y promesas de pago, cuenta abono distribuido una sola vez)
+  const haceUnMesDate = new Date();
+  haceUnMesDate.setMonth(haceUnMesDate.getMonth() - 1);
+  const fechaMesAnt = haceUnMesDate.toISOString().slice(0, 10);
+  const periodoActual = hoy.slice(0, 7);
+  const periodoAnterior = fechaMesAnt.slice(0, 7);
+
+  // Registrar movimiento en el mes anterior + uno anulado en el mes anterior para verificar exclusión
+  await registrarMovimiento(
+    {
+      id_cuenta: idCuentaCob,
+      id_tipo_movimiento: 1,
+      numero_documento_ref: `F-MESANT-${sufijo}`,
+      fecha_movimiento: fechaMesAnt,
+      fecha_vencimiento: fechaMesAnt,
+      monto: 120,
+      glosa: 'Cargo mes anterior para gráfica',
+    },
+    idUsuario
+  );
+  const movAnuladoMesAnt = await registrarMovimiento(
+    {
+      id_cuenta: idCuentaCob,
+      id_tipo_movimiento: 1,
+      numero_documento_ref: `F-ANUL-G-${sufijo}`,
+      fecha_movimiento: fechaMesAnt,
+      fecha_vencimiento: fechaMesAnt,
+      monto: 999,
+      glosa: 'Cargo anulado mes anterior (excluido)',
+    },
+    idUsuario
+  );
+  await anularMovimiento(movAnuladoMesAnt.id_movimiento, idUsuario);
+
+  const seriesMensuales = await obtenerCargosAbonosMensuales();
+  const seriePen = seriesMensuales.find((s) => s.moneda_codigo === 'PEN');
+  assert.ok(seriePen);
+  assert.equal(seriePen.meses.length, 6);
+
+  // Comparar mes actual y mes anterior directamente contra SQL en PostgreSQL
+  const pgCheck = await pool.query<{
+    periodo: string;
+    cargos: string;
+    abonos: string;
+  }>(
+    `SELECT
+      to_char(date_trunc('month', m.fecha_movimiento), 'YYYY-MM') AS periodo,
+      COALESCE(SUM(CASE WHEN tmv.naturaleza = 'C' THEN m.monto ELSE 0 END), 0)::numeric(14,2) AS cargos,
+      COALESCE(SUM(CASE WHEN tmv.naturaleza = 'A' THEN m.monto ELSE 0 END), 0)::numeric(14,2) AS abonos
+    FROM trs_movimiento_cuenta m
+    JOIN mae_cuenta_corriente cc ON cc.id_cuenta = m.id_cuenta
+    JOIN tipo_movimiento_cuenta tmv ON tmv.id_tipo_movimiento = m.id_tipo_movimiento
+    JOIN tipo_estado_movimiento est ON est.id_estado_movimiento = m.id_estado_movimiento
+    WHERE cc.id_tipo_moneda = $1
+      AND est.codigo <> 'ANULADO'
+      AND to_char(date_trunc('month', m.fecha_movimiento), 'YYYY-MM') = ANY($2::text[])
+    GROUP BY 1`,
+    [seriePen.id_tipo_moneda, [periodoAnterior, periodoActual]]
+  );
+
+  for (const p of [periodoAnterior, periodoActual]) {
+    const apiMes: { periodo: string; cargos: number; abonos: number } | undefined =
+      seriePen.meses.find((m) => m.periodo === p);
+    const dbMes = pgCheck.rows.find((r) => r.periodo === p);
+    assert.ok(apiMes, `Falta período ${p} en respuesta API`);
+    assert.equal(apiMes.cargos, Number(dbMes?.cargos || 0));
+    assert.equal(apiMes.abonos, Number(dbMes?.abonos || 0));
+  }
+  console.log('✓ 19. Cargos y abonos mensuales (6 meses, 2 meses vs PostgreSQL, sin anulados/promesas/duplicados) OK');
 
   console.log('=== TODAS LAS PRUEBAS APROBADAS ===');
 }

@@ -7,10 +7,11 @@ import {
   Scale,
   AlertTriangle,
   MessageSquare,
+  ClipboardList,
   LogOut,
-  Building2,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import logoCrm from '../assets/logo-crm.png';
 
 const navGroups = [
   { label: '', items: [{ path: '/', label: 'Dashboard', icon: LayoutDashboard }] },
@@ -30,6 +31,7 @@ const navGroups = [
     items: [
       { path: '/alertas', label: 'Alertas de Crédito', icon: AlertTriangle },
       { path: '/interacciones', label: 'Interacciones', icon: MessageSquare },
+      { path: '/cobranza', label: 'Gestión de cobranza', icon: ClipboardList },
       { path: '/conciliacion', label: 'Conciliación', icon: Scale },
     ],
   },
@@ -47,16 +49,24 @@ export default function Layout() {
   };
 
   return (
-    <div className="min-h-screen flex bg-slate-50">
+    <div className="min-h-screen flex flex-col md:flex-row bg-slate-50">
       {/* Barra lateral */}
-      <aside className="no-print w-64 bg-slate-900 text-slate-100 flex flex-col shrink-0">
-        <div className="px-5 py-5 border-b border-slate-800 flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-indigo-600 flex items-center justify-center">
-            <Building2 className="w-5 h-5 text-white" />
+      <aside className="no-print w-full md:w-64 bg-slate-900 text-slate-100 flex flex-col shrink-0">
+        <div className="px-4 py-4 border-b border-slate-800 flex items-center gap-3">
+          <div className="bg-white rounded-lg px-2.5 py-1.5 shadow-sm shrink-0">
+            <img
+              src={logoCrm}
+              alt="CRM Cuentas Corrientes"
+              className="h-7 w-auto max-w-[110px] object-contain"
+            />
           </div>
-          <div>
-            <h1 className="font-bold text-sm tracking-wide">CRM Cuentas T3</h1>
-            <p className="text-xs text-slate-400">Gestión de Crédito</p>
+          <div className="min-w-0">
+            <h1 className="font-bold text-sm tracking-wide truncate">
+              Cuentas T3
+            </h1>
+            <p className="text-xs text-slate-400 truncate">
+              Gestión de Crédito
+            </p>
           </div>
         </div>
 

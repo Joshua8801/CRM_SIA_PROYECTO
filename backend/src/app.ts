@@ -9,6 +9,7 @@ import movimientosRoutes from './routes/movimientos.routes';
 import alertasRoutes from './routes/alertas.routes';
 import interaccionesRoutes from './routes/interacciones.routes';
 import conciliacionesRoutes from './routes/conciliaciones.routes';
+import cobranzaRoutes from './routes/cobranza.routes';
 import { errorHandler } from './middlewares/errorHandler';
 
 const app = express();
@@ -34,6 +35,7 @@ app.use('/api/v1/movimientos', movimientosRoutes);
 app.use('/api/v1/alertas', alertasRoutes);
 app.use('/api/v1/interacciones', interaccionesRoutes);
 app.use('/api/v1/conciliaciones', conciliacionesRoutes);
+app.use('/api/v1/cobranza', cobranzaRoutes);
 
 app.use(errorHandler);
 

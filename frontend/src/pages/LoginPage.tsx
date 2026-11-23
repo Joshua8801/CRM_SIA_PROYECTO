@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Building2, Lock, Mail } from 'lucide-react';
+import { Lock, Mail } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import logoCrm from '../assets/logo-crm.png';
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -36,13 +37,15 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-11 h-11 rounded-xl bg-indigo-600 flex items-center justify-center">
-            <Building2 className="w-6 h-6 text-white" />
-          </div>
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-6">
+          <img
+            src={logoCrm}
+            alt="CRM Cuentas Corrientes"
+            className="h-11 w-auto max-w-[150px] object-contain"
+          />
           <div>
-            <h1 className="text-xl font-bold text-slate-900">
-              CRM Cuentas Corrientes
+            <h1 className="text-lg font-bold text-slate-900">
+              Cuentas Corrientes
             </h1>
             <p className="text-xs text-slate-500">
               Prototipo Académico — Tema T3
