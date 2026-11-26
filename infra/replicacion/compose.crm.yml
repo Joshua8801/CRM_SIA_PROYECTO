@@ -1,0 +1,22 @@
+services:
+  api-a:
+    build:
+      context: ../../backend
+    environment:
+      PORT: "4000"
+      DB_SSL: "false"
+      DATABASE_URL: "postgresql://lab_admin:${LAB_POSTGRES_PASSWORD}@postgres-a:5432/crm_replica_lab"
+      JWT_SECRET: "${LAB_JWT_SECRET:?Falta LAB_JWT_SECRET}"
+    ports:
+      - "127.0.0.1:4101:4000"
+
+  api-b:
+    build:
+      context: ../../backend
+    environment:
+      PORT: "4000"
+      DB_SSL: "false"
+      DATABASE_URL: "postgresql://lab_admin:${LAB_POSTGRES_PASSWORD}@postgres-b:5432/crm_replica_lab"
+      JWT_SECRET: "${LAB_JWT_SECRET:?Falta LAB_JWT_SECRET}"
+    ports:
+      - "127.0.0.1:4102:4000"

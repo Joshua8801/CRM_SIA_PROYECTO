@@ -1,0 +1,24 @@
+services:
+  postgres-a:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: lab_admin
+      POSTGRES_PASSWORD: ${LAB_POSTGRES_PASSWORD:?Falta LAB_POSTGRES_PASSWORD}
+      POSTGRES_DB: replica_lab
+    command: [ "postgres", "-c", "wal_level=logical" ]
+    volumes:
+      - datos_a:/var/lib/postgresql/data
+
+  postgres-b:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: lab_admin
+      POSTGRES_PASSWORD: ${LAB_POSTGRES_PASSWORD:?Falta LAB_POSTGRES_PASSWORD}
+      POSTGRES_DB: replica_lab
+    command: [ "postgres", "-c", "wal_level=logical" ]
+    volumes:
+      - datos_b:/var/lib/postgresql/data
+
+volumes:
+  datos_a:
+  datos_b:
