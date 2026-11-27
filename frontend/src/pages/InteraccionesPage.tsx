@@ -4,6 +4,7 @@ import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { Cliente, InteraccionCliente } from '../types';
 import { formatDate, formatDateTime } from '../utils/format';
+import { validarFechaIsoFrontend } from '../utils/validation';
 
 export default function InteraccionesPage() {
   const { catalogos, usuario } = useAuth();
@@ -11,6 +12,8 @@ export default function InteraccionesPage() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [filtroCliente, setFiltroCliente] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   const [form, setForm] = useState({
     id_cliente: '',
@@ -49,19 +52,66 @@ export default function InteraccionesPage() {
       resultado: '',
       fecha_proximo_seguimiento: '',
     });
+    setError('');
     setModalOpen(true);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await api.post('/interacciones', {
-      ...form,
-      id_cliente: Number(form.id_cliente),
-      id_tipo_interaccion: Number(form.id_tipo_interaccion),
-      fecha_proximo_seguimiento: form.fecha_proximo_seguimiento || null,
-    });
-    setModalOpen(false);
-    await cargar();
+    if (submitting) return;
+    setError('');
+
+    const asuntoTrim = form.asunto.trim();
+    if (!asuntoTrim) {
+      setError('El asunto no puede quedar vacío.');
+      return;
+    }
+    if (asuntoTrim.length > 120) {
+      setError('El asunto no puede superar los 120 caracteres.');
+      return;
+    }
+    const detalleTrim = form.detalle.trim();
+    if (!detalleTrim) {
+      setError('El detalle no puede quedar vacío.');
+      return;
+    }
+    if (form.resultado.trim().length > 80) {
+      setError('El resultado no puede superar los 80 caracteres.');
+      return;
+    }
+    if (form.fecha_proximo_seguimiento.trim() !== '') {
+      const fCheck = validarFechaIsoFrontend(
+        form.fecha_proximo_seguimiento,
+        'La fecha de próximo seguimiento'
+      );
+      if (!fCheck.ok) {
+        setError(fCheck.error);
+        return;
+      }
+    }
+
+    setSubmitting(true);
+    try {
+      await api.post('/interacciones', {
+        ...form,
+        id_cliente: Number(form.id_cliente),
+        id_tipo_interaccion: Number(form.id_tipo_interaccion),
+        asunto: asuntoTrim,
+        detalle: detalleTrim,
+        resultado: form.resultado.trim() || null,
+        fecha_proximo_seguimiento:
+          form.fecha_proximo_seguimiento.trim() || null,
+      });
+      setModalOpen(false);
+      await cargar();
+    } catch (err: unknown) {
+      setError(
+        (err as { response?: { data?: { error?: string } } })?.response?.data
+          ?.error || 'Error al registrar la interacción.'
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -153,7 +203,12 @@ export default function InteraccionesPage() {
             <h3 className="text-lg font-bold text-slate-900">
               Nueva Interacción con Cliente
             </h3>
-            <form onSubmit={handleSubmit} className="space-y-3">
+            {error && (
+              <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg">
+                {error}
+              </div>
+            )}
+            <form noValidate onSubmit={handleSubmit} className="space-y-3">
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">
                   Cliente
@@ -168,7 +223,7 @@ export default function InteraccionesPage() {
                 >
                   {clientes.map((c) => (
                     <option key={c.id_cliente} value={c.id_cliente}>
-                      {c.razon_social}
+                      {c.nombre_display || c.razon_social || c.nombre_completo}
                     </option>
                   ))}
                 </select>
@@ -268,9 +323,10 @@ export default function InteraccionesPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg cursor-pointer"
+                  disabled={submitting}
+                  className="px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg cursor-pointer"
                 >
-                  Guardar
+                  {submitting ? 'Guardando...' : 'Guardar'}
                 </button>
               </div>
             </form>

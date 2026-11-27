@@ -14,6 +14,12 @@ import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { CuentaCorriente, MovimientoCuenta } from '../types';
 import { formatDate, formatMoney } from '../utils/format';
+import {
+  validarComprobanteFrontend,
+  validarGlosaFrontend,
+  validarImporteFrontend,
+  validarPeriodoFrontend,
+} from '../utils/validation';
 
 interface EstadoCuentaResp {
   cuenta: CuentaCorriente & {
@@ -60,6 +66,8 @@ export default function CuentaDetallePage() {
   const [aplicarModalOpen, setAplicarModalOpen] = useState(false);
   const [error, setError] = useState('');
   const [aplicarError, setAplicarError] = useState('');
+  const [submittingMov, setSubmittingMov] = useState(false);
+  const [submittingAplicar, setSubmittingAplicar] = useState(false);
 
   // Estado de cuenta por período
   const hoy = new Date();
@@ -71,6 +79,8 @@ export default function CuentaDetallePage() {
   const [estadoCuenta, setEstadoCuenta] = useState<EstadoCuentaResp | null>(
     null
   );
+  const [loadingEstado, setLoadingEstado] = useState(false);
+  const [estadoError, setEstadoError] = useState('');
 
   // Nuevo movimiento
   const [movForm, setMovForm] = useState({
@@ -107,12 +117,45 @@ export default function CuentaDetallePage() {
   };
 
   const cargarEstadoCuenta = async () => {
-    const { data } = await api.get<EstadoCuentaResp>(
-      `/cuentas/${id}/estado-cuenta`,
-      { params: { fecha_inicio: fechaInicio, fecha_fin: fechaFin } }
-    );
-    setEstadoCuenta(data);
+    setEstadoError('');
+    const periodoCheck = validarPeriodoFrontend(fechaInicio, fechaFin);
+    if (!periodoCheck.ok) {
+      setEstadoError(periodoCheck.error);
+      return;
+    }
+
+    setLoadingEstado(true);
+    try {
+      const { data } = await api.get<EstadoCuentaResp>(
+        `/cuentas/${id}/estado-cuenta`,
+        {
+          params: {
+            fecha_inicio: periodoCheck.fechaInicio,
+            fecha_fin: periodoCheck.fechaFin,
+          },
+        }
+      );
+      setEstadoCuenta(data);
+    } catch (err: unknown) {
+      setEstadoCuenta(null);
+      setEstadoError(
+        (err as { response?: { data?: { error?: string } } })?.response?.data
+          ?.error || 'No se pudo generar el estado de cuenta.'
+      );
+    } finally {
+      setLoadingEstado(false);
+    }
   };
+
+  const estadoCorrespondeAFiltros = Boolean(
+    estadoCuenta &&
+      String(estadoCuenta.cuenta.id_cuenta) === String(id) &&
+      estadoCuenta.periodo.fecha_inicio === fechaInicio &&
+      estadoCuenta.periodo.fecha_fin === fechaFin
+  );
+
+  const puedeImprimirEstado =
+    estadoCorrespondeAFiltros && !loadingEstado && !estadoError;
 
   useEffect(() => {
     cargarCuenta();
@@ -178,24 +221,103 @@ export default function CuentaDetallePage() {
     (t) => String(t.id_tipo_movimiento) === movForm.id_tipo_movimiento
   );
 
-  const requiereComprobante = tipoSeleccionado && [
-    'CARGO_FACTURA', 'CARGO_NOTA_DEB', 'ABONO_NOTA_CRED',
-  ].includes(tipoSeleccionado.codigo);
+  const requiereComprobante =
+    tipoSeleccionado &&
+    ['CARGO_FACTURA', 'CARGO_NOTA_DEB', 'ABONO_NOTA_CRED'].includes(
+      tipoSeleccionado.codigo
+    );
+
+  const cargoElegidoAbono =
+    tipoSeleccionado?.naturaleza === 'A' && movForm.id_cargo_a_aplicar
+      ? cargosPendientes.find(
+          (c) => String(c.id_movimiento) === movForm.id_cargo_a_aplicar
+        ) || null
+      : null;
+
+  const resumenExcedenteAbono = (() => {
+    if (!cargoElegidoAbono) return null;
+    const check = validarImporteFrontend(movForm.monto, {
+      campo: 'El monto',
+      permitirCero: false,
+    });
+    if (!check.ok) return null;
+    const pend = Number(cargoElegidoAbono.saldo_pendiente);
+    if (check.valor <= pend) return null;
+    const aplicado = pend;
+    const excedente = Number((check.valor - aplicado).toFixed(2));
+    return { aplicado, excedente, cargo: cargoElegidoAbono };
+  })();
 
   const handleRegistrarMovimiento = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingMov) return;
     setError('');
+
+    if (
+      tipoSeleccionado?.naturaleza === 'C' &&
+      cuenta?.cliente_estado === 'BLOQUEADO'
+    ) {
+      setError(
+        'No se pueden registrar cargos porque el cliente se encuentra bloqueado.'
+      );
+      return;
+    }
+
+    const montoCheck = validarImporteFrontend(movForm.monto, {
+      campo: 'El monto del movimiento',
+      permitirCero: false,
+    });
+    if (!montoCheck.ok) {
+      setError(montoCheck.error);
+      return;
+    }
+
+    const compCheck = validarComprobanteFrontend(
+      movForm.numero_documento_ref,
+      tipoSeleccionado?.codigo || ''
+    );
+    if (!compCheck.ok) {
+      setError(compCheck.error);
+      return;
+    }
+
+    if (
+      tipoSeleccionado?.requiere_vencimiento &&
+      !movForm.fecha_vencimiento
+    ) {
+      setError('La fecha de vencimiento es obligatoria para este movimiento.');
+      return;
+    }
+    if (
+      tipoSeleccionado?.requiere_vencimiento &&
+      movForm.fecha_vencimiento &&
+      movForm.fecha_movimiento &&
+      movForm.fecha_vencimiento < movForm.fecha_movimiento
+    ) {
+      setError(
+        'El vencimiento no puede ser anterior a la fecha del movimiento.'
+      );
+      return;
+    }
+
+    const glosaCheck = validarGlosaFrontend(movForm.glosa);
+    if (!glosaCheck.ok) {
+      setError(glosaCheck.error);
+      return;
+    }
+
+    setSubmittingMov(true);
     try {
       await api.post('/movimientos', {
         id_cuenta: Number(id),
         id_tipo_movimiento: Number(movForm.id_tipo_movimiento),
-        numero_documento_ref: movForm.numero_documento_ref || null,
+        numero_documento_ref: compCheck.valor,
         fecha_movimiento: movForm.fecha_movimiento,
         fecha_vencimiento: tipoSeleccionado?.requiere_vencimiento
           ? movForm.fecha_vencimiento || null
           : null,
-        monto: Number(movForm.monto),
-        glosa: movForm.glosa,
+        monto: montoCheck.valor,
+        glosa: glosaCheck.valor,
         id_cargo_a_aplicar: movForm.id_cargo_a_aplicar
           ? Number(movForm.id_cargo_a_aplicar)
           : null,
@@ -208,17 +330,31 @@ export default function CuentaDetallePage() {
         (err as { response?: { data?: { error?: string } } })?.response?.data
           ?.error || 'Error al registrar movimiento.'
       );
+    } finally {
+      setSubmittingMov(false);
     }
   };
 
   const handleAplicarPago = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingAplicar) return;
     setAplicarError('');
+
+    const montoCheck = validarImporteFrontend(aplicarForm.monto_aplicado, {
+      campo: 'El importe a aplicar',
+      permitirCero: false,
+    });
+    if (!montoCheck.ok) {
+      setAplicarError(montoCheck.error);
+      return;
+    }
+
+    setSubmittingAplicar(true);
     try {
       await api.post('/movimientos/aplicar-pago', {
         id_movimiento_abono: Number(aplicarForm.id_movimiento_abono),
         id_movimiento_cargo: Number(aplicarForm.id_movimiento_cargo),
-        monto_aplicado: Number(aplicarForm.monto_aplicado),
+        monto_aplicado: montoCheck.valor,
       });
       setAplicarModalOpen(false);
       await cargarCuenta();
@@ -227,6 +363,8 @@ export default function CuentaDetallePage() {
         (err as { response?: { data?: { error?: string } } })?.response?.data
           ?.error || 'Error al aplicar el pago.'
       );
+    } finally {
+      setSubmittingAplicar(false);
     }
   };
 
@@ -446,42 +584,72 @@ export default function CuentaDetallePage() {
       {/* Tab 2: Estado de Cuenta Imprimible */}
       {tab === 'estado' && (
         <div className="space-y-4">
-          <div className="no-print bg-white rounded-xl border border-slate-200 p-4 flex flex-wrap items-end gap-3">
-            <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">
-                Fecha Inicio
-              </label>
-              <input
-                type="date"
-                value={fechaInicio}
-                onChange={(e) => setFechaInicio(e.target.value)}
-                className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
-              />
+          <div className="no-print bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Fecha Inicio
+                </label>
+                <input
+                  type="date"
+                  value={fechaInicio}
+                  onChange={(e) => {
+                    setFechaInicio(e.target.value);
+                    setEstadoError('');
+                  }}
+                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Fecha Fin
+                </label>
+                <input
+                  type="date"
+                  value={fechaFin}
+                  onChange={(e) => {
+                    setFechaFin(e.target.value);
+                    setEstadoError('');
+                  }}
+                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                />
+              </div>
+              <button
+                onClick={cargarEstadoCuenta}
+                disabled={loadingEstado}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-900 disabled:opacity-50 text-white text-sm rounded-lg cursor-pointer"
+              >
+                {loadingEstado ? 'Generando...' : 'Generar Estado'}
+              </button>
+              <button
+                onClick={() => {
+                  if (puedeImprimirEstado) window.print();
+                }}
+                disabled={!puedeImprimirEstado}
+                title={
+                  !puedeImprimirEstado
+                    ? 'Genera el estado de cuenta con los filtros actuales antes de imprimir'
+                    : undefined
+                }
+                className="ml-auto inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg cursor-pointer"
+              >
+                <Printer className="w-4 h-4" />
+                Imprimir Estado de Cuenta
+              </button>
             </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">
-                Fecha Fin
-              </label>
-              <input
-                type="date"
-                value={fechaFin}
-                onChange={(e) => setFechaFin(e.target.value)}
-                className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
-              />
-            </div>
-            <button
-              onClick={cargarEstadoCuenta}
-              className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white text-sm rounded-lg cursor-pointer"
-            >
-              Generar Estado
-            </button>
-            <button
-              onClick={() => window.print()}
-              className="ml-auto inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg cursor-pointer"
-            >
-              <Printer className="w-4 h-4" />
-              Imprimir Estado de Cuenta
-            </button>
+            {estadoError && (
+              <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg">
+                {estadoError}
+              </div>
+            )}
+            {!estadoError &&
+              estadoCuenta &&
+              !estadoCorrespondeAFiltros && (
+                <div className="p-2.5 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg">
+                  Los filtros de período cambiaron. Haz clic en &quot;Generar
+                  Estado&quot; para actualizar el informe antes de imprimir.
+                </div>
+              )}
           </div>
 
           {estadoCuenta && (
@@ -654,7 +822,14 @@ export default function CuentaDetallePage() {
                 {error}
               </div>
             )}
-            <form onSubmit={handleRegistrarMovimiento} className="space-y-3">
+            {tipoSeleccionado?.naturaleza === 'C' &&
+              cuenta.cliente_estado === 'BLOQUEADO' && (
+                <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg">
+                  El cliente se encuentra bloqueado. No se permiten nuevos cargos,
+                  pero puede registrar abonos o pagos.
+                </div>
+              )}
+            <form noValidate onSubmit={handleRegistrarMovimiento} className="space-y-3">
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">
                   Tipo de Movimiento
@@ -783,6 +958,33 @@ export default function CuentaDetallePage() {
                         </option>
                       ))}
                     </select>
+                    {resumenExcedenteAbono && (
+                      <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 space-y-0.5">
+                        <p>
+                          Se aplicará{' '}
+                          <strong>
+                            {formatMoney(
+                              resumenExcedenteAbono.aplicado,
+                              cuenta.moneda_simbolo
+                            )}
+                          </strong>{' '}
+                          al cargo{' '}
+                          {resumenExcedenteAbono.cargo.numero_documento_ref ||
+                            `#${resumenExcedenteAbono.cargo.id_movimiento}`}
+                          .
+                        </p>
+                        <p>
+                          Excedente disponible en el abono:{' '}
+                          <strong>
+                            {formatMoney(
+                              resumenExcedenteAbono.excedente,
+                              cuenta.moneda_simbolo
+                            )}
+                          </strong>
+                          .
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -812,9 +1014,14 @@ export default function CuentaDetallePage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg cursor-pointer"
+                  disabled={
+                    submittingMov ||
+                    (tipoSeleccionado?.naturaleza === 'C' &&
+                      cuenta.cliente_estado === 'BLOQUEADO')
+                  }
+                  className="px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg cursor-pointer"
                 >
-                  Registrar
+                  {submittingMov ? 'Guardando...' : 'Registrar'}
                 </button>
               </div>
             </form>
@@ -834,7 +1041,7 @@ export default function CuentaDetallePage() {
                 {aplicarError}
               </div>
             )}
-            <form onSubmit={handleAplicarPago} className="space-y-3">
+            <form noValidate onSubmit={handleAplicarPago} className="space-y-3">
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">
                   Abono Disponible
@@ -913,9 +1120,10 @@ export default function CuentaDetallePage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-sm font-medium bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer"
+                  disabled={submittingAplicar}
+                  className="px-4 py-2 text-sm font-medium bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg cursor-pointer"
                 >
-                  Aplicar Pago
+                  {submittingAplicar ? 'Aplicando...' : 'Aplicar Pago'}
                 </button>
               </div>
             </form>

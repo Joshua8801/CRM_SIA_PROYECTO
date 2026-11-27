@@ -1,6 +1,7 @@
 import { pool, withTransaction } from '../config/db';
 import { AppError } from '../types';
 import { registrarAuditoria } from '../utils/audit';
+import { validarImporte, validarPeriodo } from '../utils/validation';
 import { obtenerEstadoCuenta } from './cuentas.service';
 
 export interface PartidaDiscrepante {
@@ -193,41 +194,40 @@ export async function registrarConciliacion(
     id_cuenta: number;
     fecha_inicio: string;
     fecha_fin: string;
-    saldo_inicial_manual: number;
-    total_cargos_manual: number;
-    total_abonos_manual: number;
-    saldo_final_manual: number;
+    saldo_inicial_manual: unknown;
+    total_cargos_manual: unknown;
+    total_abonos_manual: unknown;
+    saldo_final_manual: unknown;
     observaciones?: string | null;
   },
   idUsuario: number
 ) {
-  if (input.fecha_fin < input.fecha_inicio) {
-    throw new AppError(
-      'La fecha fin no puede ser menor que la fecha inicio.',
-      400
-    );
-  }
+  const { fechaInicio, fechaFin } = validarPeriodo(
+    input.fecha_inicio,
+    input.fecha_fin
+  );
 
-  const saldoIniCents = toCents(input.saldo_inicial_manual);
-  const cargosCents = toCents(input.total_cargos_manual);
-  const abonosCents = toCents(input.total_abonos_manual);
-  const saldoFinCents = toCents(input.saldo_final_manual);
+  const saldoIniVal = validarImporte(input.saldo_inicial_manual, {
+    campo: 'El saldo inicial manual',
+    permitirNegativo: true,
+  });
+  const cargosVal = validarImporte(input.total_cargos_manual, {
+    campo: 'El total de cargos manual',
+    permitirCero: true,
+  });
+  const abonosVal = validarImporte(input.total_abonos_manual, {
+    campo: 'El total de abonos manual',
+    permitirCero: true,
+  });
+  const saldoFinVal = validarImporte(input.saldo_final_manual, {
+    campo: 'El saldo final manual',
+    permitirNegativo: true,
+  });
 
-  if (
-    !Number.isFinite(saldoIniCents) ||
-    !Number.isFinite(cargosCents) ||
-    !Number.isFinite(abonosCents) ||
-    !Number.isFinite(saldoFinCents)
-  ) {
-    throw new AppError('Todos los importes manuales deben ser numéricos.', 400);
-  }
-
-  if (cargosCents < 0 || abonosCents < 0) {
-    throw new AppError(
-      'Los totales manuales de cargos y abonos no pueden ser negativos.',
-      400
-    );
-  }
+  const saldoIniCents = toCents(saldoIniVal);
+  const cargosCents = toCents(cargosVal);
+  const abonosCents = toCents(abonosVal);
+  const saldoFinCents = toCents(saldoFinVal);
 
   const esperadoCents = saldoIniCents + cargosCents - abonosCents;
   if (saldoFinCents !== esperadoCents) {
@@ -244,8 +244,8 @@ export async function registrarConciliacion(
 
   const estadoCuenta = await obtenerEstadoCuenta(
     input.id_cuenta,
-    input.fecha_inicio,
-    input.fecha_fin
+    fechaInicio,
+    fechaFin
   );
   const sis = estadoCuenta.resumen;
 

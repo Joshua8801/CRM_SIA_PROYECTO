@@ -47,9 +47,6 @@ export default function LoginPage() {
             <h1 className="text-lg font-bold text-slate-900">
               Cuentas Corrientes
             </h1>
-            <p className="text-xs text-slate-500">
-              Prototipo Académico — Tema T3
-            </p>
           </div>
         </div>
 
@@ -71,7 +68,7 @@ export default function LoginPage() {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="usuario@crm-t3.edu"
+                placeholder="usuario@ejemplo.com"
                 className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </div>
@@ -110,19 +107,19 @@ export default function LoginPage() {
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
-              onClick={() => fillDemo('admin@crm-t3.edu', 'Admin123*')}
+              onClick={() => fillDemo('admin@crm.example', 'Admin123*')}
               className="text-left p-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs cursor-pointer"
             >
               <span className="font-semibold block text-slate-800">Admin</span>
-              <span className="text-slate-500">admin@crm-t3.edu</span>
+              <span className="text-slate-500">admin@crm.example</span>
             </button>
             <button
               type="button"
-              onClick={() => fillDemo('analista@crm-t3.edu', 'Analista123*')}
+              onClick={() => fillDemo('analista@crm.example', 'Analista123*')}
               className="text-left p-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs cursor-pointer"
             >
               <span className="font-semibold block text-slate-800">Analista</span>
-              <span className="text-slate-500">analista@crm-t3.edu</span>
+              <span className="text-slate-500">analista@crm.example</span>
             </button>
           </div>
         </div>

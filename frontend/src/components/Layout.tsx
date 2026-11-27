@@ -62,7 +62,7 @@ export default function Layout() {
           </div>
           <div className="min-w-0">
             <h1 className="font-bold text-sm tracking-wide truncate">
-              Cuentas T3
+              Cuentas Corrientes
             </h1>
             <p className="text-xs text-slate-400 truncate">
               Gestión de Crédito

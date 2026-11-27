@@ -7,6 +7,7 @@ import {
   listarClientes,
   obtenerClientePorId,
 } from '../services/clientes.service';
+import { parseIdOpcional, parseIdPositivo } from '../utils/validation';
 
 export async function getClientes(
   req: AuthRequest,
@@ -15,9 +16,7 @@ export async function getClientes(
 ) {
   try {
     const search = req.query.search as string | undefined;
-    const id_segmento = req.query.id_segmento
-      ? Number(req.query.id_segmento)
-      : undefined;
+    const id_segmento = parseIdOpcional(req.query.id_segmento, 'Segmento');
     const estado = req.query.estado as string | undefined;
     const tipo_persona = req.query.tipo_persona as string | undefined;
 
@@ -39,7 +38,8 @@ export async function getClienteById(
   next: NextFunction
 ) {
   try {
-    const cliente = await obtenerClientePorId(Number(req.params.id));
+    const idCliente = parseIdPositivo(req.params.id, 'ID de cliente');
+    const cliente = await obtenerClientePorId(idCliente);
     res.json({ cliente });
   } catch (error) {
     next(error);
@@ -53,12 +53,13 @@ export async function postCliente(
 ) {
   try {
     const { tipo_persona, id_tipo_documento, numero_documento, id_segmento } =
-      req.body;
+      req.body ?? {};
     if (
       !tipo_persona ||
-      !id_tipo_documento ||
-      !numero_documento ||
-      !id_segmento
+      id_tipo_documento === undefined ||
+      typeof numero_documento !== 'string' ||
+      !numero_documento.trim() ||
+      id_segmento === undefined
     ) {
       res.status(400).json({
         error:
@@ -66,7 +67,18 @@ export async function postCliente(
       });
       return;
     }
-    const cliente = await crearCliente(req.body, req.user!.id_usuario);
+    const idTipoDoc = parseIdPositivo(id_tipo_documento, 'Tipo de documento');
+    const idSeg = parseIdPositivo(id_segmento, 'Segmento');
+    const idMoneda = parseIdOpcional(req.body.id_tipo_moneda, 'Tipo de moneda');
+    const cliente = await crearCliente(
+      {
+        ...req.body,
+        id_tipo_documento: idTipoDoc,
+        id_segmento: idSeg,
+        id_tipo_moneda: idMoneda,
+      },
+      req.user!.id_usuario
+    );
     res.status(201).json({ cliente });
   } catch (error) {
     next(error);
@@ -79,9 +91,11 @@ export async function putCliente(
   next: NextFunction
 ) {
   try {
+    const idCliente = parseIdPositivo(req.params.id, 'ID de cliente');
+    const idSeg = parseIdOpcional(req.body?.id_segmento, 'Segmento');
     const cliente = await actualizarCliente(
-      Number(req.params.id),
-      req.body,
+      idCliente,
+      { ...req.body, id_segmento: idSeg },
       req.user!.id_usuario
     );
     res.json({ cliente });
@@ -96,18 +110,20 @@ export async function postCuentaCliente(
   next: NextFunction
 ) {
   try {
-    const { id_tipo_moneda, linea_credito } = req.body;
-    if (!id_tipo_moneda || linea_credito === undefined) {
+    const idCliente = parseIdPositivo(req.params.id, 'ID de cliente');
+    const { id_tipo_moneda, linea_credito } = req.body ?? {};
+    if (id_tipo_moneda === undefined || linea_credito === undefined) {
       res.status(400).json({
         error: 'La moneda y la línea de crédito son obligatorias.',
       });
       return;
     }
+    const idMoneda = parseIdPositivo(id_tipo_moneda, 'Tipo de moneda');
     const cuenta = await abrirCuentaCliente(
-      Number(req.params.id),
+      idCliente,
       {
-        id_tipo_moneda: Number(id_tipo_moneda),
-        linea_credito: Number(linea_credito),
+        id_tipo_moneda: idMoneda,
+        linea_credito,
       },
       req.user!.id_usuario
     );

@@ -16,6 +16,10 @@ import {
   GestionCobranza,
 } from '../types';
 import { formatDate, formatDateTime, formatMoney } from '../utils/format';
+import {
+  validarFechaIsoFrontend,
+  validarImporteFrontend,
+} from '../utils/validation';
 
 interface DetalleGestionResp {
   gestion: GestionCobranza;
@@ -190,24 +194,50 @@ export default function CobranzaPage() {
     }
   };
 
+  const [compError, setCompError] = useState('');
+  const [submittingComp, setSubmittingComp] = useState(false);
+
   const handleCrearCompromiso = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!detalle) return;
+    if (!detalle || submittingComp) return;
     setError('');
+    setCompError('');
+
+    const fechaCheck = validarFechaIsoFrontend(
+      compForm.fecha_pactada,
+      'La fecha pactada'
+    );
+    if (!fechaCheck.ok) {
+      setCompError(fechaCheck.error);
+      return;
+    }
+
+    const montoCheck = validarImporteFrontend(compForm.monto_comprometido, {
+      campo: 'El monto comprometido',
+      permitirCero: false,
+    });
+    if (!montoCheck.ok) {
+      setCompError(montoCheck.error);
+      return;
+    }
+
+    setSubmittingComp(true);
     try {
       await api.post(`/cobranza/${detalle.gestion.id_gestion}/compromisos`, {
-        fecha_pactada: compForm.fecha_pactada,
-        monto_comprometido: Number(compForm.monto_comprometido),
-        observacion: compForm.observacion || null,
+        fecha_pactada: fechaCheck.valor,
+        monto_comprometido: montoCheck.valor,
+        observacion: compForm.observacion.trim() || null,
       });
       setModalCompromiso(false);
       await cargarLista();
       await cargarDetalle(detalle.gestion.id_gestion);
     } catch (err: unknown) {
-      setError(
+      setCompError(
         (err as { response?: { data?: { error?: string } } })?.response?.data
           ?.error || 'Error al registrar compromiso de pago.'
       );
+    } finally {
+      setSubmittingComp(false);
     }
   };
 
@@ -715,7 +745,12 @@ export default function CobranzaPage() {
             <h3 className="text-lg font-bold text-slate-900">
               Registrar Compromiso de Pago
             </h3>
-            <form onSubmit={handleCrearCompromiso} className="space-y-3">
+            {compError && (
+              <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg">
+                {compError}
+              </div>
+            )}
+            <form noValidate onSubmit={handleCrearCompromiso} className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-slate-700 mb-1">
@@ -777,9 +812,10 @@ export default function CobranzaPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg cursor-pointer"
+                  disabled={submittingComp}
+                  className="px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg cursor-pointer"
                 >
-                  Registrar
+                  {submittingComp ? 'Guardando...' : 'Registrar'}
                 </button>
               </div>
             </form>

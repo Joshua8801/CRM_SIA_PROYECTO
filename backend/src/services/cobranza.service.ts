@@ -1,6 +1,7 @@
 import { pool, withTransaction } from '../config/db';
 import { AppError } from '../types';
 import { registrarAuditoria } from '../utils/audit';
+import { validarFechaIso, validarImporte } from '../utils/validation';
 
 export async function listarUsuariosActivos() {
   const res = await pool.query(
@@ -316,21 +317,19 @@ export async function crearCompromisoPago(
   idGestion: number,
   input: {
     fecha_pactada: string;
-    monto_comprometido: number;
+    monto_comprometido: unknown;
     observacion?: string | null;
   },
   idUsuario: number
 ) {
-  const monto = Number(input.monto_comprometido);
-  if (!Number.isFinite(monto) || monto <= 0) {
-    throw new AppError(
-      'El monto comprometido debe ser mayor que cero.',
-      400
-    );
-  }
-  if (!input.fecha_pactada) {
-    throw new AppError('La fecha pactada es obligatoria.', 400);
-  }
+  const fechaPactada = validarFechaIso(
+    input.fecha_pactada,
+    'La fecha pactada'
+  );
+  const monto = validarImporte(input.monto_comprometido, {
+    campo: 'El monto comprometido',
+    permitirCero: false,
+  });
 
   return withTransaction(async (client) => {
     const gestionRes = await client.query<{ estado: string }>(
@@ -354,7 +353,7 @@ export async function crearCompromisoPago(
        RETURNING *`,
       [
         idGestion,
-        input.fecha_pactada,
+        fechaPactada,
         monto,
         input.observacion?.trim() || null,
         idUsuario,

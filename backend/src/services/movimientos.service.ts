@@ -2,6 +2,11 @@ import { PoolClient } from 'pg';
 import { pool, withTransaction } from '../config/db';
 import { AppError } from '../types';
 import { registrarAuditoria } from '../utils/audit';
+import {
+  validarComprobante,
+  validarGlosa,
+  validarImporte,
+} from '../utils/validation';
 import { evaluarAlertasCuenta } from './alertas.service';
 
 export interface RegistrarMovimientoInput {
@@ -10,7 +15,7 @@ export interface RegistrarMovimientoInput {
   numero_documento_ref?: string | null;
   fecha_movimiento?: string;
   fecha_vencimiento?: string | null;
-  monto: number;
+  monto: unknown;
   glosa: string;
   id_cargo_a_aplicar?: number | null;
 }
@@ -43,20 +48,23 @@ export async function registrarMovimiento(
   input: RegistrarMovimientoInput,
   idUsuario: number
 ) {
-  const monto = Number(input.monto);
-  if (!Number.isFinite(monto) || monto <= 0) {
-    throw new AppError('El monto del movimiento debe ser mayor a cero.', 400);
-  }
+  const monto = validarImporte(input.monto, {
+    campo: 'El monto del movimiento',
+    permitirCero: false,
+  });
+  const glosaLimpia = validarGlosa(input.glosa);
 
   return withTransaction(async (client) => {
     const cuentaRes = await client.query<{
       id_cuenta: number;
       estado: string;
+      cliente_estado: string;
     }>(
-      `SELECT id_cuenta, estado
-       FROM mae_cuenta_corriente
-       WHERE id_cuenta = $1
-       FOR UPDATE`,
+      `SELECT cc.id_cuenta, cc.estado, cl.estado AS cliente_estado
+       FROM mae_cuenta_corriente cc
+       JOIN mae_cliente cl ON cl.id_cliente = cc.id_cliente
+       WHERE cc.id_cuenta = $1
+       FOR UPDATE OF cc`,
       [input.id_cuenta]
     );
 
@@ -87,9 +95,16 @@ export async function registrarMovimiento(
     }
     const tipo = tipoRes.rows[0];
 
+    if (tipo.naturaleza === 'C' && cuenta.cliente_estado === 'BLOQUEADO') {
+      throw new AppError(
+        'No se pueden registrar cargos porque el cliente se encuentra bloqueado.',
+        400
+      );
+    }
+
     const fechaMov = input.fecha_movimiento || new Date().toISOString().slice(0, 10);
     const fechaVencimiento = input.fecha_vencimiento || null;
-    const documento = input.numero_documento_ref?.trim() || null;
+    const documento = validarComprobante(input.numero_documento_ref, tipo.codigo);
 
     if (!esFechaValida(fechaMov)) {
       throw new AppError('La fecha del movimiento no es válida.', 400);
@@ -103,9 +118,28 @@ export async function registrarMovimiento(
     if (fechaVencimiento && fechaVencimiento < fechaMov) {
       throw new AppError('El vencimiento no puede ser anterior a la fecha del movimiento.', 400);
     }
-    if (tiposComprobante.has(tipo.codigo) && !documento) {
-      throw new AppError('El número de comprobante es obligatorio para este movimiento.', 400);
+
+    if (tiposComprobante.has(tipo.codigo) && documento) {
+      const idEstadoAnulado = await obtenerEstadoId(client, 'ANULADO');
+      const dupRes = await client.query(
+        `SELECT 1 FROM trs_movimiento_cuenta
+         WHERE id_cuenta = $1
+           AND id_tipo_movimiento = $2
+           AND id_estado_movimiento <> $3
+           AND numero_documento_ref IS NOT NULL
+           AND upper(regexp_replace(numero_documento_ref, '[[:space:]]+', '', 'g'))
+             = upper(regexp_replace($4, '[[:space:]]+', '', 'g'))
+         LIMIT 1`,
+        [input.id_cuenta, input.id_tipo_movimiento, idEstadoAnulado, documento]
+      );
+      if (dupRes.rows.length > 0) {
+        throw new AppError(
+          'El comprobante ya existe en esta cuenta para el tipo seleccionado.',
+          409
+        );
+      }
     }
+
     const idEstadoInicial = await obtenerEstadoId(client, 'PENDIENTE');
 
     const movRes = await client.query(
@@ -122,7 +156,7 @@ export async function registrarMovimiento(
         fechaMov,
         fechaVencimiento,
         monto,
-        input.glosa.trim(),
+        glosaLimpia,
         idUsuario,
       ]
     ).catch((error: { code?: string; constraint?: string }) => {
@@ -315,12 +349,13 @@ async function aplicarPagoInterno(
 export async function aplicarPago(
   idAbono: number,
   idCargo: number,
-  montoAplicado: number,
+  montoAplicadoRaw: unknown,
   idUsuario: number
 ) {
-  if (!Number.isFinite(montoAplicado) || montoAplicado <= 0) {
-    throw new AppError('El monto a aplicar debe ser mayor a cero.', 400);
-  }
+  const montoAplicado = validarImporte(montoAplicadoRaw, {
+    campo: 'El monto a aplicar',
+    permitirCero: false,
+  });
   return withTransaction(async (client) => {
     return aplicarPagoInterno(
       client,

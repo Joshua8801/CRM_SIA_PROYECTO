@@ -43,11 +43,11 @@ INSERT INTO tipo_estado_movimiento (codigo, nombre, es_final) VALUES
 ('ANULADO',   'Anulado', TRUE);
 
 -- 2. Usuarios de prueba (contraseñas reales hasheadas con bcrypt)
--- admin@crm-t3.edu    -> Admin123*
--- analista@crm-t3.edu -> Analista123*
+-- admin@crm.example    -> Admin123*
+-- analista@crm.example -> Analista123*
 INSERT INTO mae_usuario (nombre_completo, email, password_hash, rol) VALUES
-('Administrador del Sistema', 'admin@crm-t3.edu', '$2b$10$8sKBFauXzeZDcer/x4z5xugVquOsqipQDxM54Jl3dCygo9T5/cy6e', 'ADMIN'),
-('Analista de Créditos',      'analista@crm-t3.edu', '$2b$10$TUMocD4mRuXj2w3/hpx2O./OnTp6VgvIEa5ksQGcECE2Uvx2NpFcu', 'ANALISTA');
+('Administrador del Sistema', 'admin@crm.example', '$2b$10$8sKBFauXzeZDcer/x4z5xugVquOsqipQDxM54Jl3dCygo9T5/cy6e', 'ADMIN'),
+('Analista de Créditos',      'analista@crm.example', '$2b$10$TUMocD4mRuXj2w3/hpx2O./OnTp6VgvIEa5ksQGcECE2Uvx2NpFcu', 'ANALISTA');
 
 -- 3. Clientes ficticios (Personas Jurídicas y Personas Naturales)
 INSERT INTO mae_cliente (

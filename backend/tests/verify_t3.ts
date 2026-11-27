@@ -5,9 +5,14 @@ dotenv.config();
 import { pool } from '../src/config/db';
 import {
   abrirCuentaCliente,
+  actualizarCliente,
   crearCliente,
 } from '../src/services/clientes.service';
-import { obtenerCuentaPorId, obtenerEstadoCuenta } from '../src/services/cuentas.service';
+import {
+  actualizarCuenta,
+  obtenerCuentaPorId,
+  obtenerEstadoCuenta,
+} from '../src/services/cuentas.service';
 import { aplicarPago, anularMovimiento, registrarMovimiento } from '../src/services/movimientos.service';
 import { actualizarEstadoAlerta } from '../src/services/alertas.service';
 import { registrarConciliacion } from '../src/services/conciliaciones.service';
@@ -21,6 +26,12 @@ import {
   obtenerCargosAbonosMensuales,
   obtenerResumenDashboardData,
 } from '../src/services/dashboard.service';
+import { loginUsuario } from '../src/services/auth.service';
+import {
+  crearInteraccion,
+  listarInteracciones,
+} from '../src/services/interacciones.service';
+import { parseIdPositivo } from '../src/utils/validation';
 
 async function run() {
   console.log('=== Verificación Funcional CRM Cuentas Corrientes T3 ===');
@@ -658,6 +669,440 @@ async function run() {
   assert.equal(penMesDespues?.cargos, penMesAntes?.cargos);
   assert.equal(penMesDespues?.abonos, penMesAntes?.abonos);
   console.log('✓ 20. Multimoneda PEN/USD (saldo USD=70, gráfica USD 100/30, PEN intacto y rechazo 2da USD) OK');
+
+  // 21. Validaciones estrictas de importes, comprobantes, glosa, vencimiento, cliente bloqueado y abono con excedente
+  const cliVal = await crearCliente(
+    {
+      tipo_persona: 'NATURAL',
+      id_tipo_documento: 2,
+      numero_documento: `77${sufijo}`,
+      nombre_completo: 'Cliente Validaciones',
+      id_segmento: 3,
+      linea_credito: 0, // 0 permitido en línea de crédito
+    },
+    idUsuario
+  );
+  const idCuentaVal = cliVal.cuenta_inicial.id_cuenta;
+  assert.equal(Number(cliVal.cuenta_inicial.linea_credito), 0);
+
+  // Rechazos de línea de crédito al crear/editar cliente y cuenta
+  for (const invalido of [-50, 10.999, true, 1000000000000, 'abc']) {
+    await assert.rejects(
+      crearCliente(
+        {
+          tipo_persona: 'NATURAL',
+          id_tipo_documento: 2,
+          numero_documento: `78${sufijo}`,
+          nombre_completo: 'Cliente Invalido',
+          id_segmento: 3,
+          linea_credito: invalido as unknown as number,
+        },
+        idUsuario
+      )
+    );
+    await assert.rejects(
+      actualizarCliente(
+        cliVal.id_cliente,
+        { linea_credito: invalido as unknown as number },
+        idUsuario
+      )
+    );
+    await assert.rejects(
+      abrirCuentaCliente(
+        cliVal.id_cliente,
+        { id_tipo_moneda: 2, linea_credito: invalido as unknown as number },
+        idUsuario
+      )
+    );
+    await assert.rejects(
+      actualizarCuenta(
+        idCuentaVal,
+        { linea_credito: invalido as unknown as number },
+        idUsuario
+      )
+    );
+  }
+  await actualizarCuenta(idCuentaVal, { linea_credito: 500 }, idUsuario);
+
+  const movsAntesVal = (await obtenerCuentaPorId(idCuentaVal)).movimientos.length;
+  const saldoAntesVal = Number((await obtenerCuentaPorId(idCuentaVal)).cuenta.saldo_actual);
+
+  // Rechazos de importe en cargo/abono (-50, 0, 10.999, true, fuera de rango)
+  for (const montoInvalido of [-50, 0, 10.999, true, 1000000000000]) {
+    await assert.rejects(
+      registrarMovimiento(
+        {
+          id_cuenta: idCuentaVal,
+          id_tipo_movimiento: 1,
+          numero_documento_ref: `F001-${sufijo}1`,
+          fecha_movimiento: hoy,
+          fecha_vencimiento: hoy,
+          monto: montoInvalido,
+          glosa: 'Prueba rechazo importe',
+        },
+        idUsuario
+      )
+    );
+  }
+
+  // Rechazo comprobante "???", glosa vacía con espacios y vencimiento anterior
+  await assert.rejects(
+    registrarMovimiento(
+      {
+        id_cuenta: idCuentaVal,
+        id_tipo_movimiento: 1,
+        numero_documento_ref: '???',
+        fecha_movimiento: hoy,
+        fecha_vencimiento: hoy,
+        monto: 100,
+        glosa: 'Comprobante invalido',
+      },
+      idUsuario
+    )
+  );
+  await assert.rejects(
+    registrarMovimiento(
+      {
+        id_cuenta: idCuentaVal,
+        id_tipo_movimiento: 1,
+        numero_documento_ref: `F001-${sufijo}2`,
+        fecha_movimiento: hoy,
+        fecha_vencimiento: hoy,
+        monto: 100,
+        glosa: '   ',
+      },
+      idUsuario
+    )
+  );
+  const ayerVal = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  await assert.rejects(
+    registrarMovimiento(
+      {
+        id_cuenta: idCuentaVal,
+        id_tipo_movimiento: 1,
+        numero_documento_ref: `F001-${sufijo}3`,
+        fecha_movimiento: hoy,
+        fecha_vencimiento: ayerVal,
+        monto: 100,
+        glosa: 'Vencimiento anterior',
+      },
+      idUsuario
+    )
+  );
+
+  // Ningún rechazo debe haber creado movimientos ni alterado el saldo
+  const detDespuesRechazos = await obtenerCuentaPorId(idCuentaVal);
+  assert.equal(detDespuesRechazos.movimientos.length, movsAntesVal);
+  assert.equal(Number(detDespuesRechazos.cuenta.saldo_actual), saldoAntesVal);
+
+  // Factura válida + rechazo de comprobante duplicado (variando espacios/mayúsculas)
+  const facturaVal = await registrarMovimiento(
+    {
+      id_cuenta: idCuentaVal,
+      id_tipo_movimiento: 1,
+      numero_documento_ref: `F001-${sufijo}9`,
+      fecha_movimiento: hoy,
+      fecha_vencimiento: hoy,
+      monto: 120,
+      glosa: 'Factura válida',
+    },
+    idUsuario
+  );
+  await assert.rejects(
+    registrarMovimiento(
+      {
+        id_cuenta: idCuentaVal,
+        id_tipo_movimiento: 1,
+        numero_documento_ref: ` f001 - ${sufijo}9 `,
+        fecha_movimiento: hoy,
+        fecha_vencimiento: hoy,
+        monto: 50,
+        glosa: 'Duplicado',
+      },
+      idUsuario
+    ),
+    /ya existe/i
+  );
+
+  // Abono válido con excedente (150 sobre factura de 120 => aplica 120, excedente 30)
+  const abonoExc = await registrarMovimiento(
+    {
+      id_cuenta: idCuentaVal,
+      id_tipo_movimiento: 3,
+      numero_documento_ref: `OP-EXC-${sufijo}`,
+      fecha_movimiento: hoy,
+      monto: 150,
+      glosa: 'Abono con excedente',
+      id_cargo_a_aplicar: facturaVal.id_movimiento,
+    },
+    idUsuario
+  );
+  const detExc = await obtenerCuentaPorId(idCuentaVal);
+  assert.equal(Number(detExc.cuenta.saldo_actual), -30);
+  const abonoExcRow = detExc.movimientos.find(
+    (m: { id_movimiento: number }) => m.id_movimiento === abonoExc.id_movimiento
+  );
+  assert.equal(Number(abonoExcRow.monto_aplicado), 120);
+  assert.equal(Number(abonoExcRow.saldo_pendiente), 30);
+
+  // Rechazos en aplicación de pago
+  await assert.rejects(
+    aplicarPago(abonoExc.id_movimiento, facturaVal.id_movimiento, 10.999, idUsuario)
+  );
+  await assert.rejects(
+    aplicarPago(abonoExc.id_movimiento, facturaVal.id_movimiento, true, idUsuario)
+  );
+
+  // Cliente bloqueado con cuenta activa: impide nuevos cargos, sin crear movimiento
+  await actualizarCliente(cliVal.id_cliente, { estado: 'BLOQUEADO' }, idUsuario);
+  const movsAntesBloq = (await obtenerCuentaPorId(idCuentaVal)).movimientos.length;
+  await assert.rejects(
+    registrarMovimiento(
+      {
+        id_cuenta: idCuentaVal,
+        id_tipo_movimiento: 1,
+        numero_documento_ref: `F001-${sufijo}8`,
+        fecha_movimiento: hoy,
+        fecha_vencimiento: hoy,
+        monto: 80,
+        glosa: 'Cargo cliente bloqueado',
+      },
+      idUsuario
+    ),
+    /bloqueado/i
+  );
+  assert.equal((await obtenerCuentaPorId(idCuentaVal)).movimientos.length, movsAntesBloq);
+
+  console.log('✓ 21. Validaciones de importes, comprobantes, vencimiento, cliente bloqueado y abono con excedente OK');
+
+  // 22. Validaciones de Estado de cuenta y Conciliación (fechas, vacíos, decimales, saldos negativos)
+  await assert.rejects(
+    obtenerEstadoCuenta(idCuentaVal, '2026-02-30', '2026-03-01'),
+    /fecha válida/i
+  );
+  await assert.rejects(
+    obtenerEstadoCuenta(idCuentaVal, '2026-03-10', '2026-03-01'),
+    /fecha fin no puede ser menor/i
+  );
+  await assert.rejects(
+    obtenerEstadoCuenta(idCuentaVal, '', '2026-03-01'),
+    /obligatoria/i
+  );
+
+  // Conciliación: rechazar vacíos, >2 decimales y cargos/abonos negativos; permitir saldo a favor (negativo)
+  await assert.rejects(
+    registrarConciliacion(
+      {
+        id_cuenta: idCuentaVal,
+        fecha_inicio: hoy,
+        fecha_fin: hoy,
+        saldo_inicial_manual: '' as unknown as number,
+        total_cargos_manual: 120,
+        total_abonos_manual: 150,
+        saldo_final_manual: -30,
+      },
+      idUsuario
+    )
+  );
+  await assert.rejects(
+    registrarConciliacion(
+      {
+        id_cuenta: idCuentaVal,
+        fecha_inicio: hoy,
+        fecha_fin: hoy,
+        saldo_inicial_manual: 0,
+        total_cargos_manual: 10.999,
+        total_abonos_manual: 0,
+        saldo_final_manual: 10.999,
+      },
+      idUsuario
+    ),
+    /2 decimales/i
+  );
+  const concilSaldoFavor = await registrarConciliacion(
+    {
+      id_cuenta: idCuentaVal,
+      fecha_inicio: hoy,
+      fecha_fin: hoy,
+      saldo_inicial_manual: 0,
+      total_cargos_manual: 120,
+      total_abonos_manual: 150,
+      saldo_final_manual: -30,
+      observaciones: 'Conciliación exacta con saldo a favor (-30)',
+    },
+    idUsuario
+  );
+  assert.equal(concilSaldoFavor.estado, 'CONCILIADO');
+
+  console.log('✓ 22. Estado de cuenta y Conciliación (fechas, vacíos, decimales y saldo a favor) OK');
+
+  // 23. Brechas de auditoría: clientes (DNI/RUC/contacto/longitudes), IDs inválidos 400, interacciones, cobranza y login ambos roles
+  // 23a. Acceso de ambos usuarios con los correos nuevos
+  const loginAdmin = await loginUsuario('admin@crm.example', 'Admin123*');
+  assert.equal(loginAdmin.usuario.rol, 'ADMIN');
+  const loginAnalista = await loginUsuario('analista@crm.example', 'Analista123*');
+  assert.equal(loginAnalista.usuario.rol, 'ANALISTA');
+
+  // 23b. IDs inválidos devuelven AppError 400
+  for (const idInvalido of ['abc', '0', '-5', '1.5']) {
+    assert.throws(() => parseIdPositivo(idInvalido, 'ID'), (err: unknown) => {
+      return (err as { statusCode?: number })?.statusCode === 400;
+    });
+  }
+
+  // 23c. Clientes: DNI 8 dígitos, RUC 11 dígitos, documento vacío con espacios, email/teléfono inválidos
+  await assert.rejects(
+    crearCliente(
+      {
+        tipo_persona: 'NATURAL',
+        id_tipo_documento: 2, // DNI
+        numero_documento: '1234567A',
+        nombre_completo: 'DNI No Numerico',
+        id_segmento: 3,
+      },
+      idUsuario
+    ),
+    /8 dígitos/i
+  );
+  await assert.rejects(
+    crearCliente(
+      {
+        tipo_persona: 'JURIDICA',
+        id_tipo_documento: 1, // RUC
+        numero_documento: '2012345678X',
+        razon_social: 'RUC No Numerico',
+        id_segmento: 1,
+      },
+      idUsuario
+    ),
+    /11 dígitos/i
+  );
+  await assert.rejects(
+    crearCliente(
+      {
+        tipo_persona: 'NATURAL',
+        id_tipo_documento: 2,
+        numero_documento: '   ',
+        nombre_completo: 'Doc Vacio',
+        id_segmento: 3,
+      },
+      idUsuario
+    )
+  );
+  await assert.rejects(
+    crearCliente(
+      {
+        tipo_persona: 'NATURAL',
+        id_tipo_documento: 2,
+        numero_documento: `66${sufijo}`,
+        nombre_completo: 'Email Invalido',
+        id_segmento: 3,
+        email: 'correo-invalido',
+      },
+      idUsuario
+    ),
+    /correo/i
+  );
+  await assert.rejects(
+    crearCliente(
+      {
+        tipo_persona: 'NATURAL',
+        id_tipo_documento: 2,
+        numero_documento: `65${sufijo}`,
+        nombre_completo: 'Telefono Invalido',
+        id_segmento: 3,
+        telefono: 'abc',
+      },
+      idUsuario
+    ),
+    /teléfono/i
+  );
+
+  // 23d. Interacciones: asunto/detalle solo espacios, fecha imposible, y nombre_display natural/jurídica
+  await assert.rejects(
+    crearInteraccion(
+      {
+        id_cliente: cliNatural.id_cliente,
+        id_tipo_interaccion: 1,
+        asunto: '   ',
+        detalle: 'Detalle válido',
+      },
+      idUsuario
+    )
+  );
+  await assert.rejects(
+    crearInteraccion(
+      {
+        id_cliente: cliNatural.id_cliente,
+        id_tipo_interaccion: 1,
+        asunto: 'Asunto válido',
+        detalle: '   ',
+      },
+      idUsuario
+    )
+  );
+  await assert.rejects(
+    crearInteraccion(
+      {
+        id_cliente: cliNatural.id_cliente,
+        id_tipo_interaccion: 1,
+        asunto: 'Asunto válido',
+        detalle: 'Detalle válido',
+        fecha_proximo_seguimiento: '2026-02-30',
+      },
+      idUsuario
+    ),
+    /fecha válida/i
+  );
+  const intNat = await crearInteraccion(
+    {
+      id_cliente: cliNatural.id_cliente,
+      id_tipo_interaccion: 1,
+      asunto: 'Seguimiento Persona Natural',
+      detalle: 'Llamada de prueba',
+      fecha_proximo_seguimiento: hoy,
+    },
+    idUsuario
+  );
+  const listaInts = await listarInteracciones(cliNatural.id_cliente);
+  const rowInt = listaInts.find(
+    (x: { id_interaccion: number }) => x.id_interaccion === intNat.id_interaccion
+  );
+  assert.ok(rowInt?.cliente_nombre && rowInt.cliente_nombre.length > 0);
+
+  // 23e. Cobranza: compromisos de pago rechazan 10.999, true, 0, -50 y fecha imposible
+  const gestionVal = await abrirGestion(
+    {
+      id_cuenta: cliNatural.cuenta_inicial.id_cuenta,
+      motivo: 'Seguimiento auditoría',
+    },
+    idUsuario
+  );
+  for (const mInv of [10.999, true, 0, -50]) {
+    await assert.rejects(
+      crearCompromisoPago(
+        gestionVal.id_gestion,
+        {
+          fecha_pactada: hoy,
+          monto_comprometido: mInv as unknown as number,
+        },
+        idUsuario
+      )
+    );
+  }
+  await assert.rejects(
+    crearCompromisoPago(
+      gestionVal.id_gestion,
+      {
+        fecha_pactada: '2026-02-30',
+        monto_comprometido: 100,
+      },
+      idUsuario
+    ),
+    /fecha válida/i
+  );
+
+  console.log('✓ 23. Auditoría (clientes DNI/RUC/contacto, IDs 400, interacciones, cobranza y login ambos correos) OK');
 
   console.log('=== TODAS LAS PRUEBAS APROBADAS ===');
 }

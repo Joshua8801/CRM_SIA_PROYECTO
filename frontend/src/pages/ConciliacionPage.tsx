@@ -4,6 +4,10 @@ import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { ConciliacionCuenta, CuentaCorriente } from '../types';
 import { formatDate, formatDateTime, formatMoney } from '../utils/format';
+import {
+  validarImporteFrontend,
+  validarPeriodoFrontend,
+} from '../utils/validation';
 
 interface PreviewSistema {
   cuenta: CuentaCorriente;
@@ -48,6 +52,7 @@ export default function ConciliacionPage() {
   });
   const [mensaje, setMensaje] = useState('');
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   const puedeEditar = usuario?.rol === 'ADMIN' || usuario?.rol === 'ANALISTA';
 
@@ -71,19 +76,28 @@ export default function ConciliacionPage() {
     setError('');
     setMensaje('');
     if (!idCuenta) return;
+
+    const periodoCheck = validarPeriodoFrontend(fechaInicio, fechaFin);
+    if (!periodoCheck.ok) {
+      setPreview(null);
+      setError(periodoCheck.error);
+      return;
+    }
+
     try {
       const { data } = await api.get<PreviewSistema>(
         '/conciliaciones/preview',
         {
           params: {
             id_cuenta: idCuenta,
-            fecha_inicio: fechaInicio,
-            fecha_fin: fechaFin,
+            fecha_inicio: periodoCheck.fechaInicio,
+            fecha_fin: periodoCheck.fechaFin,
           },
         }
       );
       setPreview(data);
     } catch (err: unknown) {
+      setPreview(null);
       setError(
         (err as { response?: { data?: { error?: string } } })?.response?.data
           ?.error || 'Error al calcular datos del sistema.'
@@ -98,61 +112,105 @@ export default function ConciliacionPage() {
       campo === 'total_cargos_manual' ||
       campo === 'total_abonos_manual'
     ) {
-      const iniCents = toCents(next.saldo_inicial_manual || 0);
-      const carCents = toCents(next.total_cargos_manual || 0);
-      const aboCents = toCents(next.total_abonos_manual || 0);
-      next.saldo_final_manual = fromCents(
-        iniCents + carCents - aboCents
-      ).toFixed(2);
+      const iniCheck = validarImporteFrontend(next.saldo_inicial_manual, {
+        campo: 'Saldo inicial',
+        permitirNegativo: true,
+      });
+      const carCheck = validarImporteFrontend(next.total_cargos_manual, {
+        campo: 'Total cargos',
+        permitirCero: true,
+      });
+      const aboCheck = validarImporteFrontend(next.total_abonos_manual, {
+        campo: 'Total abonos',
+        permitirCero: true,
+      });
+      if (iniCheck.ok && carCheck.ok && aboCheck.ok) {
+        const iniCents = toCents(iniCheck.valor);
+        const carCents = toCents(carCheck.valor);
+        const aboCents = toCents(aboCheck.valor);
+        next.saldo_final_manual = fromCents(
+          iniCents + carCents - aboCents
+        ).toFixed(2);
+      }
     }
     setManual(next);
   };
 
-  const todosManualesCompletos =
+  const previewVigente =
     preview !== null &&
-    manual.saldo_inicial_manual !== '' &&
-    manual.total_cargos_manual !== '' &&
-    manual.total_abonos_manual !== '' &&
-    manual.saldo_final_manual !== '';
+    String(preview.cuenta.id_cuenta) === idCuenta &&
+    preview.periodo.fecha_inicio === fechaInicio &&
+    preview.periodo.fecha_fin === fechaFin;
 
-  const comparacionEnVivo = todosManualesCompletos
+  const validacionManual = (() => {
+    const ini = validarImporteFrontend(manual.saldo_inicial_manual, {
+      campo: 'El saldo inicial manual',
+      permitirNegativo: true,
+    });
+    const car = validarImporteFrontend(manual.total_cargos_manual, {
+      campo: 'El total de cargos manual',
+      permitirCero: true,
+    });
+    const abo = validarImporteFrontend(manual.total_abonos_manual, {
+      campo: 'El total de abonos manual',
+      permitirCero: true,
+    });
+    const fin = validarImporteFrontend(manual.saldo_final_manual, {
+      campo: 'El saldo final manual',
+      permitirNegativo: true,
+    });
+    return { ini, car, abo, fin };
+  })();
+
+  const todosManualesValidos =
+    previewVigente &&
+    validacionManual.ini.ok &&
+    validacionManual.car.ok &&
+    validacionManual.abo.ok &&
+    validacionManual.fin.ok;
+
+  const comparacionEnVivo = todosManualesValidos
     ? (() => {
+        const iniVal = validacionManual.ini.ok ? validacionManual.ini.valor : 0;
+        const carVal = validacionManual.car.ok ? validacionManual.car.valor : 0;
+        const aboVal = validacionManual.abo.ok ? validacionManual.abo.valor : 0;
+        const finVal = validacionManual.fin.ok ? validacionManual.fin.valor : 0;
         const items = [
           {
             campo: 'saldo_inicial',
             etiqueta: 'Saldo Inicial',
-            sistema: fromCents(toCents(preview.sistema.saldo_inicial_sistema)),
-            manual: fromCents(toCents(manual.saldo_inicial_manual)),
+            sistema: fromCents(toCents(preview!.sistema.saldo_inicial_sistema)),
+            manual: fromCents(toCents(iniVal)),
             difCents:
-              toCents(preview.sistema.saldo_inicial_sistema) -
-              toCents(manual.saldo_inicial_manual),
+              toCents(preview!.sistema.saldo_inicial_sistema) -
+              toCents(iniVal),
           },
           {
             campo: 'total_cargos',
             etiqueta: 'Total Cargos',
-            sistema: fromCents(toCents(preview.sistema.total_cargos_sistema)),
-            manual: fromCents(toCents(manual.total_cargos_manual)),
+            sistema: fromCents(toCents(preview!.sistema.total_cargos_sistema)),
+            manual: fromCents(toCents(carVal)),
             difCents:
-              toCents(preview.sistema.total_cargos_sistema) -
-              toCents(manual.total_cargos_manual),
+              toCents(preview!.sistema.total_cargos_sistema) -
+              toCents(carVal),
           },
           {
             campo: 'total_abonos',
             etiqueta: 'Total Abonos',
-            sistema: fromCents(toCents(preview.sistema.total_abonos_sistema)),
-            manual: fromCents(toCents(manual.total_abonos_manual)),
+            sistema: fromCents(toCents(preview!.sistema.total_abonos_sistema)),
+            manual: fromCents(toCents(aboVal)),
             difCents:
-              toCents(preview.sistema.total_abonos_sistema) -
-              toCents(manual.total_abonos_manual),
+              toCents(preview!.sistema.total_abonos_sistema) -
+              toCents(aboVal),
           },
           {
             campo: 'saldo_final',
             etiqueta: 'Saldo Final',
-            sistema: fromCents(toCents(preview.sistema.saldo_final_sistema)),
-            manual: fromCents(toCents(manual.saldo_final_manual)),
+            sistema: fromCents(toCents(preview!.sistema.saldo_final_sistema)),
+            manual: fromCents(toCents(finVal)),
             difCents:
-              toCents(preview.sistema.saldo_final_sistema) -
-              toCents(manual.saldo_final_manual),
+              toCents(preview!.sistema.saldo_final_sistema) -
+              toCents(finVal),
           },
         ].map((item) => ({
           ...item,
@@ -162,10 +220,8 @@ export default function ConciliacionPage() {
 
         const discrepantes = items.filter((i) => i.discrepante);
         const formulaManualValida =
-          toCents(manual.saldo_final_manual) ===
-          toCents(manual.saldo_inicial_manual) +
-            toCents(manual.total_cargos_manual) -
-            toCents(manual.total_abonos_manual);
+          toCents(finVal) ===
+          toCents(iniVal) + toCents(carVal) - toCents(aboVal);
 
         return {
           items,
@@ -178,19 +234,52 @@ export default function ConciliacionPage() {
 
   const handleGuardarConciliacion = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
     setError('');
     setMensaje('');
+
+    if (!previewVigente) {
+      setError(
+        'Debes calcular el período vigente antes de registrar la conciliación.'
+      );
+      return;
+    }
+
+    const periodoCheck = validarPeriodoFrontend(fechaInicio, fechaFin);
+    if (!periodoCheck.ok) {
+      setError(periodoCheck.error);
+      return;
+    }
+
+    if (!validacionManual.ini.ok) {
+      setError(validacionManual.ini.error);
+      return;
+    }
+    if (!validacionManual.car.ok) {
+      setError(validacionManual.car.error);
+      return;
+    }
+    if (!validacionManual.abo.ok) {
+      setError(validacionManual.abo.error);
+      return;
+    }
+    if (!validacionManual.fin.ok) {
+      setError(validacionManual.fin.error);
+      return;
+    }
+
+    setSubmitting(true);
     try {
       const { data } = await api.post<{ conciliacion: ConciliacionCuenta }>(
         '/conciliaciones',
         {
           id_cuenta: Number(idCuenta),
-          fecha_inicio: fechaInicio,
-          fecha_fin: fechaFin,
-          saldo_inicial_manual: Number(manual.saldo_inicial_manual),
-          total_cargos_manual: Number(manual.total_cargos_manual),
-          total_abonos_manual: Number(manual.total_abonos_manual),
-          saldo_final_manual: Number(manual.saldo_final_manual),
+          fecha_inicio: periodoCheck.fechaInicio,
+          fecha_fin: periodoCheck.fechaFin,
+          saldo_inicial_manual: validacionManual.ini.valor,
+          total_cargos_manual: validacionManual.car.valor,
+          total_abonos_manual: validacionManual.abo.valor,
+          saldo_final_manual: validacionManual.fin.valor,
           observaciones: manual.observaciones || null,
         }
       );
@@ -219,6 +308,8 @@ export default function ConciliacionPage() {
         (err as { response?: { data?: { error?: string } } })?.response?.data
           ?.error || 'Error al registrar conciliación.'
       );
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -227,11 +318,11 @@ export default function ConciliacionPage() {
       <div>
         <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
           <Scale className="w-6 h-6 text-indigo-600" />
-          Conciliación de Estado de Cuenta
+          Conciliación de estado de cuenta
         </h2>
         <p className="text-sm text-slate-500">
-          Producto diferenciador: compara el cálculo automático del sistema
-          frente al cálculo manual del mismo período en sus cuatro importes.
+          Compara el saldo inicial, los cargos, los abonos y el saldo final del
+          mismo período.
         </p>
       </div>
 
@@ -243,7 +334,12 @@ export default function ConciliacionPage() {
           </label>
           <select
             value={idCuenta}
-            onChange={(e) => setIdCuenta(e.target.value)}
+            onChange={(e) => {
+              setIdCuenta(e.target.value);
+              setPreview(null);
+              setError('');
+              setMensaje('');
+            }}
             className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
           >
             {cuentas.map((cc) => (
@@ -260,7 +356,12 @@ export default function ConciliacionPage() {
           <input
             type="date"
             value={fechaInicio}
-            onChange={(e) => setFechaInicio(e.target.value)}
+            onChange={(e) => {
+              setFechaInicio(e.target.value);
+              setPreview(null);
+              setError('');
+              setMensaje('');
+            }}
             className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
           />
         </div>
@@ -271,7 +372,12 @@ export default function ConciliacionPage() {
           <input
             type="date"
             value={fechaFin}
-            onChange={(e) => setFechaFin(e.target.value)}
+            onChange={(e) => {
+              setFechaFin(e.target.value);
+              setPreview(null);
+              setError('');
+              setMensaje('');
+            }}
             className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
           />
         </div>
@@ -297,6 +403,7 @@ export default function ConciliacionPage() {
       {/* Comparador lado a lado */}
       {preview && (
         <form
+          noValidate
           onSubmit={handleGuardarConciliacion}
           className="bg-white rounded-xl border border-slate-200 p-6 space-y-5"
         >
@@ -557,9 +664,10 @@ export default function ConciliacionPage() {
             <div className="flex justify-end">
               <button
                 type="submit"
-                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg cursor-pointer"
+                disabled={submitting}
+                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg cursor-pointer"
               >
-                Registrar Conciliación
+                {submitting ? 'Registrando...' : 'Registrar Conciliación'}
               </button>
             </div>
           )}

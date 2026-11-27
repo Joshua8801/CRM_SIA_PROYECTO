@@ -1,6 +1,11 @@
 import { pool, withTransaction } from '../config/db';
 import { AppError } from '../types';
 import { registrarAuditoria } from '../utils/audit';
+import {
+  validarFechaIso,
+  validarTextoOpcional,
+  validarTextoRequerido,
+} from '../utils/validation';
 
 export async function listarInteracciones(idCliente?: number) {
   const params: unknown[] = [];
@@ -41,6 +46,22 @@ export async function crearInteraccion(
   },
   idUsuario: number
 ) {
+  const asuntoLimpio = validarTextoRequerido(input.asunto, 'El asunto', 120);
+  const detalleLimpio = validarTextoRequerido(input.detalle, 'El detalle');
+  const resultadoLimpio = validarTextoOpcional(
+    input.resultado,
+    'El resultado',
+    80
+  );
+  const fechaSeguimiento =
+    input.fecha_proximo_seguimiento &&
+    String(input.fecha_proximo_seguimiento).trim() !== ''
+      ? validarFechaIso(
+          input.fecha_proximo_seguimiento,
+          'La fecha de próximo seguimiento'
+        )
+      : null;
+
   return withTransaction(async (client) => {
     const cli = await client.query(
       'SELECT id_cliente FROM mae_cliente WHERE id_cliente = $1',
@@ -48,6 +69,14 @@ export async function crearInteraccion(
     );
     if (cli.rows.length === 0) {
       throw new AppError('Cliente no encontrado.', 404);
+    }
+
+    const tipoRes = await client.query(
+      'SELECT id_tipo_interaccion FROM tipo_interaccion WHERE id_tipo_interaccion = $1 AND activo = TRUE',
+      [input.id_tipo_interaccion]
+    );
+    if (tipoRes.rows.length === 0) {
+      throw new AppError('Tipo de interacción inválido.', 400);
     }
 
     const res = await client.query(
@@ -59,10 +88,10 @@ export async function crearInteraccion(
         input.id_cliente,
         input.id_tipo_interaccion,
         idUsuario,
-        input.asunto.trim(),
-        input.detalle.trim(),
-        input.resultado?.trim() || null,
-        input.fecha_proximo_seguimiento || null,
+        asuntoLimpio,
+        detalleLimpio,
+        resultadoLimpio,
+        fechaSeguimiento,
       ]
     );
 

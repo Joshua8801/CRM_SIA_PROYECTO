@@ -1,6 +1,13 @@
 import { pool, withTransaction } from '../config/db';
 import { AppError } from '../types';
 import { registrarAuditoria } from '../utils/audit';
+import {
+  validarEmailOpcional,
+  validarImporte,
+  validarTelefonoOpcional,
+  validarTextoOpcional,
+  validarTextoRequerido,
+} from '../utils/validation';
 import { evaluarAlertasCuenta } from './alertas.service';
 
 export type TipoPersona = 'NATURAL' | 'JURIDICA';
@@ -27,23 +34,15 @@ function normalizarNombresPersona(
   razonSocial?: string | null
 ) {
   if (tipoPersona === 'NATURAL') {
-    const limpio = nombreCompleto?.trim() || '';
-    if (!limpio) {
-      throw new AppError(
-        'El nombre completo es obligatorio para persona natural.',
-        400
-      );
-    }
+    const limpio = validarTextoRequerido(
+      nombreCompleto,
+      'El nombre completo',
+      150
+    );
     return { nombre_completo: limpio, razon_social: null };
   }
   if (tipoPersona === 'JURIDICA') {
-    const limpio = razonSocial?.trim() || '';
-    if (!limpio) {
-      throw new AppError(
-        'La razón social es obligatoria para persona jurídica.',
-        400
-      );
-    }
+    const limpio = validarTextoRequerido(razonSocial, 'La razón social', 150);
     return { nombre_completo: null, razon_social: limpio };
   }
   throw new AppError('Tipo de persona inválido. Use NATURAL o JURIDICA.', 400);
@@ -169,23 +168,54 @@ export async function crearCliente(input: ClienteInput, idUsuario: number) {
     input.razon_social
   );
 
+  const nombreComercial = validarTextoOpcional(
+    input.nombre_comercial,
+    'El nombre comercial',
+    150
+  );
+  const emailLimpio = validarEmailOpcional(input.email);
+  const telefonoLimpio = validarTelefonoOpcional(input.telefono);
+  const direccionLimpia = validarTextoOpcional(
+    input.direccion,
+    'La dirección',
+    250
+  );
+  const numDoc = validarTextoRequerido(
+    input.numero_documento,
+    'El número de documento',
+    20
+  );
+
   return withTransaction(async (client) => {
     const docRes = await client.query<{
+      codigo: string;
       longitud_exacta: number | null;
       nombre: string;
     }>(
-      'SELECT longitud_exacta, nombre FROM tipo_documento WHERE id_tipo_documento = $1 AND activo = TRUE',
+      'SELECT codigo, longitud_exacta, nombre FROM tipo_documento WHERE id_tipo_documento = $1 AND activo = TRUE',
       [input.id_tipo_documento]
     );
     if (docRes.rows.length === 0) {
       throw new AppError('Tipo de documento inválido.', 400);
     }
 
-    const numDoc = input.numero_documento.trim();
-    const longExacta = docRes.rows[0].longitud_exacta;
+    const doc = docRes.rows[0];
+    if (doc.codigo === 'DNI' && !/^\d{8}$/.test(numDoc)) {
+      throw new AppError(
+        'El DNI debe tener exactamente 8 dígitos numéricos.',
+        400
+      );
+    }
+    if (doc.codigo === 'RUC' && !/^\d{11}$/.test(numDoc)) {
+      throw new AppError(
+        'El RUC debe tener exactamente 11 dígitos numéricos.',
+        400
+      );
+    }
+    const longExacta = doc.longitud_exacta;
     if (longExacta && numDoc.length !== longExacta) {
       throw new AppError(
-        `El documento ${docRes.rows[0].nombre} debe tener exactamente ${longExacta} caracteres.`,
+        `El documento ${doc.nombre} debe tener exactamente ${longExacta} caracteres.`,
         400
       );
     }
@@ -210,11 +240,11 @@ export async function crearCliente(input: ClienteInput, idUsuario: number) {
         numDoc,
         nombres.nombre_completo,
         nombres.razon_social,
-        input.nombre_comercial?.trim() || null,
+        nombreComercial,
         input.id_segmento,
-        input.email?.trim() || null,
-        input.telefono?.trim() || null,
-        input.direccion?.trim() || null,
+        emailLimpio,
+        telefonoLimpio,
+        direccionLimpia,
         idUsuario,
       ]
     );
@@ -242,12 +272,11 @@ export async function crearCliente(input: ClienteInput, idUsuario: number) {
 
     const lineaCredito =
       input.linea_credito !== undefined
-        ? Number(input.linea_credito)
+        ? validarImporte(input.linea_credito, {
+            campo: 'La línea de crédito',
+            permitirCero: true,
+          })
         : Number(segRes.rows[0].linea_credito_sugerida);
-
-    if (lineaCredito < 0) {
-      throw new AppError('La línea de crédito no puede ser negativa.', 400);
-    }
 
     const numeroCuenta = `CC-${String(cliente.id_cliente).padStart(5, '0')}-${codigoMoneda}`;
 
@@ -307,6 +336,34 @@ export async function actualizarCliente(
       input.razon_social !== undefined ? input.razon_social : prev.razon_social
     );
 
+    const nombreComercial =
+      input.nombre_comercial !== undefined
+        ? validarTextoOpcional(
+            input.nombre_comercial,
+            'El nombre comercial',
+            150
+          )
+        : prev.nombre_comercial;
+    const emailLimpio =
+      input.email !== undefined
+        ? validarEmailOpcional(input.email)
+        : prev.email;
+    const telefonoLimpio =
+      input.telefono !== undefined
+        ? validarTelefonoOpcional(input.telefono)
+        : prev.telefono;
+    const direccionLimpia =
+      input.direccion !== undefined
+        ? validarTextoOpcional(input.direccion, 'La dirección', 250)
+        : prev.direccion;
+
+    if (
+      input.estado !== undefined &&
+      !['ACTIVO', 'BLOQUEADO', 'INACTIVO'].includes(input.estado)
+    ) {
+      throw new AppError('Estado de cliente inválido.', 400);
+    }
+
     const updatedRes = await client.query(
       `UPDATE mae_cliente
        SET tipo_persona = $1,
@@ -325,27 +382,21 @@ export async function actualizarCliente(
         tipoPersona,
         nombres.nombre_completo,
         nombres.razon_social,
-        input.nombre_comercial !== undefined
-          ? input.nombre_comercial?.trim() || null
-          : prev.nombre_comercial,
+        nombreComercial,
         input.id_segmento ?? null,
-        input.email !== undefined ? input.email?.trim() || null : prev.email,
-        input.telefono !== undefined
-          ? input.telefono?.trim() || null
-          : prev.telefono,
-        input.direccion !== undefined
-          ? input.direccion?.trim() || null
-          : prev.direccion,
+        emailLimpio,
+        telefonoLimpio,
+        direccionLimpia,
         input.estado ?? null,
         idCliente,
       ]
     );
 
     if (input.linea_credito !== undefined) {
-      const nuevaLinea = Number(input.linea_credito);
-      if (nuevaLinea < 0) {
-        throw new AppError('La línea de crédito no puede ser negativa.', 400);
-      }
+      const nuevaLinea = validarImporte(input.linea_credito, {
+        campo: 'La línea de crédito',
+        permitirCero: true,
+      });
       const cuentas = await client.query<{ id_cuenta: number }>(
         'SELECT id_cuenta FROM mae_cuenta_corriente WHERE id_cliente = $1 ORDER BY id_cuenta LIMIT 1 FOR UPDATE',
         [idCliente]
@@ -390,13 +441,13 @@ export async function actualizarCliente(
 
 export async function abrirCuentaCliente(
   idCliente: number,
-  input: { id_tipo_moneda: number; linea_credito: number },
+  input: { id_tipo_moneda: number; linea_credito: unknown },
   idUsuario: number
 ) {
-  const lineaCredito = Number(input.linea_credito);
-  if (!Number.isFinite(lineaCredito) || lineaCredito < 0) {
-    throw new AppError('La línea de crédito no puede ser negativa.', 400);
-  }
+  const lineaCredito = validarImporte(input.linea_credito, {
+    campo: 'La línea de crédito',
+    permitirCero: true,
+  });
 
   return withTransaction(async (client) => {
     const cliRes = await client.query(

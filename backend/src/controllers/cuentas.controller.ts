@@ -6,6 +6,7 @@ import {
   obtenerCuentaPorId,
   obtenerEstadoCuenta,
 } from '../services/cuentas.service';
+import { parseIdPositivo } from '../utils/validation';
 
 export async function getCuentas(
   req: AuthRequest,
@@ -28,7 +29,8 @@ export async function getCuentaById(
   next: NextFunction
 ) {
   try {
-    const data = await obtenerCuentaPorId(Number(req.params.id));
+    const idCuenta = parseIdPositivo(req.params.id, 'ID de cuenta');
+    const data = await obtenerCuentaPorId(idCuenta);
     res.json(data);
   } catch (error) {
     next(error);
@@ -41,8 +43,9 @@ export async function patchCuenta(
   next: NextFunction
 ) {
   try {
+    const idCuenta = parseIdPositivo(req.params.id, 'ID de cuenta');
     const cuenta = await actualizarCuenta(
-      Number(req.params.id),
+      idCuenta,
       req.body,
       req.user!.id_usuario
     );
@@ -58,15 +61,21 @@ export async function getEstadoCuenta(
   next: NextFunction
 ) {
   try {
-    const idCuenta = Number(req.params.id);
+    const idCuenta = parseIdPositivo(req.params.id, 'ID de cuenta');
     const hoy = new Date();
     const primerDia = new Date(hoy.getFullYear(), hoy.getMonth(), 1)
       .toISOString()
       .slice(0, 10);
     const fechaHoy = hoy.toISOString().slice(0, 10);
 
-    const fechaInicio = (req.query.fecha_inicio as string) || primerDia;
-    const fechaFin = (req.query.fecha_fin as string) || fechaHoy;
+    const fechaInicio =
+      req.query.fecha_inicio !== undefined
+        ? (req.query.fecha_inicio as string)
+        : primerDia;
+    const fechaFin =
+      req.query.fecha_fin !== undefined
+        ? (req.query.fecha_fin as string)
+        : fechaHoy;
 
     const estadoCuenta = await obtenerEstadoCuenta(
       idCuenta,

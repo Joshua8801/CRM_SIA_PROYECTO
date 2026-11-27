@@ -11,6 +11,7 @@ import {
   vincularAbonoACompromiso,
   vincularInteraccionAGestion,
 } from '../services/cobranza.service';
+import { parseIdOpcional, parseIdPositivo } from '../utils/validation';
 
 export async function getUsuariosCobranza(
   _req: AuthRequest,
@@ -32,9 +33,7 @@ export async function getGestiones(
 ) {
   try {
     const estado = req.query.estado as string | undefined;
-    const id_cuenta = req.query.id_cuenta
-      ? Number(req.query.id_cuenta)
-      : undefined;
+    const id_cuenta = parseIdOpcional(req.query.id_cuenta, 'ID de cuenta');
     const gestiones = await listarGestiones({ estado, id_cuenta });
     res.json({ gestiones });
   } catch (error) {
@@ -48,7 +47,8 @@ export async function getGestionById(
   next: NextFunction
 ) {
   try {
-    const data = await obtenerGestionPorId(Number(req.params.id));
+    const idGestion = parseIdPositivo(req.params.id, 'ID de gestión');
+    const data = await obtenerGestionPorId(idGestion);
     res.json(data);
   } catch (error) {
     next(error);
@@ -61,19 +61,22 @@ export async function postGestion(
   next: NextFunction
 ) {
   try {
-    const { id_cuenta, id_usuario_responsable, motivo } = req.body;
-    if (!id_cuenta || !motivo) {
+    const { id_cuenta, id_usuario_responsable, motivo } = req.body ?? {};
+    if (id_cuenta === undefined || typeof motivo !== 'string' || !motivo.trim()) {
       res
         .status(400)
         .json({ error: 'La cuenta corriente y el motivo son obligatorios.' });
       return;
     }
+    const idCuenta = parseIdPositivo(id_cuenta, 'Cuenta corriente');
+    const idResp = parseIdOpcional(
+      id_usuario_responsable,
+      'Usuario responsable'
+    );
     const gestion = await abrirGestion(
       {
-        id_cuenta: Number(id_cuenta),
-        id_usuario_responsable: id_usuario_responsable
-          ? Number(id_usuario_responsable)
-          : undefined,
+        id_cuenta: idCuenta,
+        id_usuario_responsable: idResp,
         motivo,
       },
       req.user!.id_usuario
@@ -90,8 +93,9 @@ export async function patchCerrarGestion(
   next: NextFunction
 ) {
   try {
+    const idGestion = parseIdPositivo(req.params.id, 'ID de gestión');
     const gestion = await cerrarGestion(
-      Number(req.params.id),
+      idGestion,
       req.body?.observaciones_cierre,
       req.user!.id_usuario
     );
@@ -107,14 +111,16 @@ export async function postVincularInteraccion(
   next: NextFunction
 ) {
   try {
-    const { id_interaccion } = req.body;
-    if (!id_interaccion) {
+    const idGestion = parseIdPositivo(req.params.id, 'ID de gestión');
+    const { id_interaccion } = req.body ?? {};
+    if (id_interaccion === undefined) {
       res.status(400).json({ error: 'Debe seleccionar una interacción.' });
       return;
     }
+    const idInteraccion = parseIdPositivo(id_interaccion, 'Interacción');
     const interaccion = await vincularInteraccionAGestion(
-      Number(req.params.id),
-      Number(id_interaccion),
+      idGestion,
+      idInteraccion,
       req.user!.id_usuario
     );
     res.json({ interaccion });
@@ -129,18 +135,23 @@ export async function postCompromiso(
   next: NextFunction
 ) {
   try {
-    const { fecha_pactada, monto_comprometido, observacion } = req.body;
-    if (!fecha_pactada || monto_comprometido === undefined) {
+    const idGestion = parseIdPositivo(req.params.id, 'ID de gestión');
+    const { fecha_pactada, monto_comprometido, observacion } = req.body ?? {};
+    if (
+      fecha_pactada === undefined ||
+      monto_comprometido === undefined ||
+      monto_comprometido === null
+    ) {
       res.status(400).json({
         error: 'La fecha pactada y el monto comprometido son obligatorios.',
       });
       return;
     }
     const compromiso = await crearCompromisoPago(
-      Number(req.params.id),
+      idGestion,
       {
         fecha_pactada,
-        monto_comprometido: Number(monto_comprometido),
+        monto_comprometido,
         observacion,
       },
       req.user!.id_usuario
@@ -157,14 +168,19 @@ export async function patchVincularAbono(
   next: NextFunction
 ) {
   try {
-    const { id_movimiento_abono } = req.body;
-    if (!id_movimiento_abono) {
+    const idCompromiso = parseIdPositivo(
+      req.params.idCompromiso,
+      'ID de compromiso'
+    );
+    const { id_movimiento_abono } = req.body ?? {};
+    if (id_movimiento_abono === undefined) {
       res.status(400).json({ error: 'Debe seleccionar un abono válido.' });
       return;
     }
+    const idAbono = parseIdPositivo(id_movimiento_abono, 'ID de abono');
     const compromiso = await vincularAbonoACompromiso(
-      Number(req.params.idCompromiso),
-      Number(id_movimiento_abono),
+      idCompromiso,
+      idAbono,
       req.user!.id_usuario
     );
     res.json({ compromiso });
@@ -179,8 +195,12 @@ export async function patchCancelarCompromiso(
   next: NextFunction
 ) {
   try {
+    const idCompromiso = parseIdPositivo(
+      req.params.idCompromiso,
+      'ID de compromiso'
+    );
     const compromiso = await cancelarCompromiso(
-      Number(req.params.idCompromiso),
+      idCompromiso,
       req.user!.id_usuario
     );
     res.json({ compromiso });

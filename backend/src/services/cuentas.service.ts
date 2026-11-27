@@ -1,6 +1,7 @@
 import { pool, withTransaction } from '../config/db';
 import { AppError } from '../types';
 import { registrarAuditoria } from '../utils/audit';
+import { validarImporte, validarPeriodo } from '../utils/validation';
 import { evaluarAlertasCuenta } from './alertas.service';
 
 export async function listarCuentas(filtros: {
@@ -29,6 +30,7 @@ export async function listarCuentas(filtros: {
     `SELECT
       vcs.*,
       c.tipo_persona,
+      c.estado AS cliente_estado,
       COALESCE(c.razon_social, c.nombre_completo) AS cliente_nombre,
       c.numero_documento,
       td.codigo AS tipo_documento_codigo,
@@ -53,6 +55,7 @@ export async function obtenerCuentaPorId(idCuenta: number) {
     `SELECT
       vcs.*,
       c.tipo_persona,
+      c.estado AS cliente_estado,
       COALESCE(c.razon_social, c.nombre_completo) AS cliente_nombre,
       c.numero_documento,
       c.email AS cliente_email,
@@ -132,9 +135,13 @@ export async function actualizarCuenta(
     }
     const prev = prevRes.rows[0];
 
-    if (input.linea_credito !== undefined && Number(input.linea_credito) < 0) {
-      throw new AppError('La línea de crédito no puede ser negativa.', 400);
-    }
+    const nuevaLinea =
+      input.linea_credito !== undefined
+        ? validarImporte(input.linea_credito, {
+            campo: 'La línea de crédito',
+            permitirCero: true,
+          })
+        : null;
 
     const updatedRes = await client.query(
       `UPDATE mae_cuenta_corriente
@@ -144,7 +151,7 @@ export async function actualizarCuenta(
        WHERE id_cuenta = $3
        RETURNING *`,
       [
-        input.linea_credito !== undefined ? Number(input.linea_credito) : null,
+        nuevaLinea,
         input.estado ?? null,
         idCuenta,
       ]
@@ -176,17 +183,19 @@ export async function obtenerEstadoCuenta(
   fechaInicio: string,
   fechaFin: string
 ) {
-  if (fechaFin < fechaInicio) {
-    throw new AppError(
-      'La fecha fin no puede ser menor que la fecha inicio.',
-      400
-    );
+  if (!Number.isInteger(idCuenta) || idCuenta <= 0) {
+    throw new AppError('Cuenta corriente inválida.', 400);
   }
+  const { fechaInicio: ini, fechaFin: fin } = validarPeriodo(
+    fechaInicio,
+    fechaFin
+  );
 
   const cuentaRes = await pool.query(
     `SELECT
       vcs.*,
       c.tipo_persona,
+      c.estado AS cliente_estado,
       COALESCE(c.razon_social, c.nombre_completo) AS cliente_nombre,
       c.numero_documento,
       c.direccion,
@@ -218,8 +227,8 @@ export async function obtenerEstadoCuenta(
       saldo_final: string;
     }>('SELECT * FROM fn_resumen_periodo_cuenta($1, $2::date, $3::date)', [
       idCuenta,
-      fechaInicio,
-      fechaFin,
+      ini,
+      fin,
     ]),
     pool.query(
       `SELECT

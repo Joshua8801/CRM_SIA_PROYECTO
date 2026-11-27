@@ -4,8 +4,13 @@ import { loginUsuario, obtenerPerfilUsuario } from '../services/auth.service';
 
 export async function login(req: Request, res: Response, next: NextFunction) {
   try {
-    const { email, password } = req.body;
-    if (!email || !password) {
+    const { email, password } = req.body ?? {};
+    if (
+      typeof email !== 'string' ||
+      typeof password !== 'string' ||
+      !email.trim() ||
+      !password
+    ) {
       res.status(400).json({ error: 'Debe ingresar correo y contraseña.' });
       return;
     }

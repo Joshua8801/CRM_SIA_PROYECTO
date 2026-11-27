@@ -5,6 +5,11 @@ import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { Cliente, TipoPersona } from '../types';
 import { formatMoney } from '../utils/format';
+import {
+  validarEmailOpcionalFrontend,
+  validarImporteFrontend,
+  validarTelefonoOpcionalFrontend,
+} from '../utils/validation';
 
 export default function ClientesPage() {
   const { catalogos, usuario } = useAuth();
@@ -16,6 +21,7 @@ export default function ClientesPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editando, setEditando] = useState<Cliente | null>(null);
   const [error, setError] = useState('');
+  const [submittingCliente, setSubmittingCliente] = useState(false);
 
   // Modal abrir cuenta adicional (PEN/USD)
   const [modalCuentaCliente, setModalCuentaCliente] = useState<Cliente | null>(
@@ -26,6 +32,7 @@ export default function ClientesPage() {
     linea_credito: '',
   });
   const [cuentaError, setCuentaError] = useState('');
+  const [submittingCuenta, setSubmittingCuenta] = useState(false);
 
   const [form, setForm] = useState({
     tipo_persona: 'JURIDICA' as TipoPersona,
@@ -148,25 +155,101 @@ export default function ClientesPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingCliente) return;
     setError('');
+
+    if (!editando) {
+      const docTrim = form.numero_documento.trim();
+      if (!docTrim) {
+        setError('El número de documento es obligatorio.');
+        return;
+      }
+      if (docTrim.length > 20) {
+        setError('El número de documento no puede superar los 20 caracteres.');
+        return;
+      }
+      const tipoDoc = catalogos?.tiposDocumento.find(
+        (d) => String(d.id_tipo_documento) === form.id_tipo_documento
+      );
+      if (tipoDoc?.codigo === 'DNI' && !/^\d{8}$/.test(docTrim)) {
+        setError('El DNI debe tener exactamente 8 dígitos numéricos.');
+        return;
+      }
+      if (tipoDoc?.codigo === 'RUC' && !/^\d{11}$/.test(docTrim)) {
+        setError('El RUC debe tener exactamente 11 dígitos numéricos.');
+        return;
+      }
+    }
+
+    if (form.tipo_persona === 'NATURAL') {
+      const nom = form.nombre_completo.trim();
+      if (!nom) {
+        setError('El nombre completo es obligatorio.');
+        return;
+      }
+      if (nom.length > 150) {
+        setError('El nombre completo no puede superar los 150 caracteres.');
+        return;
+      }
+    } else {
+      const rs = form.razon_social.trim();
+      if (!rs) {
+        setError('La razón social es obligatoria.');
+        return;
+      }
+      if (rs.length > 150) {
+        setError('La razón social no puede superar los 150 caracteres.');
+        return;
+      }
+    }
+
+    if (form.nombre_comercial.trim().length > 150) {
+      setError('El nombre comercial no puede superar los 150 caracteres.');
+      return;
+    }
+    const emailCheck = validarEmailOpcionalFrontend(form.email);
+    if (!emailCheck.ok) {
+      setError(emailCheck.error);
+      return;
+    }
+    const telCheck = validarTelefonoOpcionalFrontend(form.telefono);
+    if (!telCheck.ok) {
+      setError(telCheck.error);
+      return;
+    }
+    if (form.direccion.trim().length > 250) {
+      setError('La dirección no puede superar los 250 caracteres.');
+      return;
+    }
+
+    const lineaCheck = validarImporteFrontend(form.linea_credito, {
+      campo: 'La línea de crédito',
+      permitirCero: true,
+    });
+    if (!lineaCheck.ok) {
+      setError(lineaCheck.error);
+      return;
+    }
+
+    setSubmittingCliente(true);
     try {
       const payload = {
         tipo_persona: form.tipo_persona,
         id_tipo_documento: Number(form.id_tipo_documento),
-        numero_documento: form.numero_documento,
+        numero_documento: form.numero_documento.trim(),
         nombre_completo:
-          form.tipo_persona === 'NATURAL' ? form.nombre_completo : null,
+          form.tipo_persona === 'NATURAL' ? form.nombre_completo.trim() : null,
         razon_social:
-          form.tipo_persona === 'JURIDICA' ? form.razon_social : null,
-        nombre_comercial: form.nombre_comercial || null,
+          form.tipo_persona === 'JURIDICA' ? form.razon_social.trim() : null,
+        nombre_comercial: form.nombre_comercial.trim() || null,
         id_segmento: Number(form.id_segmento),
         id_tipo_moneda: form.id_tipo_moneda
           ? Number(form.id_tipo_moneda)
           : undefined,
-        email: form.email || null,
-        telefono: form.telefono || null,
-        direccion: form.direccion || null,
-        linea_credito: Number(form.linea_credito || 0),
+        email: emailCheck.valor,
+        telefono: telCheck.valor,
+        direccion: form.direccion.trim() || null,
+        linea_credito: lineaCheck.valor,
         estado: form.estado,
       };
       if (editando) {
@@ -181,17 +264,30 @@ export default function ClientesPage() {
         (err as { response?: { data?: { error?: string } } })?.response?.data
           ?.error || 'Error al guardar cliente.'
       );
+    } finally {
+      setSubmittingCliente(false);
     }
   };
 
   const handleAbrirCuenta = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!modalCuentaCliente) return;
+    if (!modalCuentaCliente || submittingCuenta) return;
     setCuentaError('');
+
+    const lineaCheck = validarImporteFrontend(cuentaForm.linea_credito, {
+      campo: 'La línea de crédito',
+      permitirCero: true,
+    });
+    if (!lineaCheck.ok) {
+      setCuentaError(lineaCheck.error);
+      return;
+    }
+
+    setSubmittingCuenta(true);
     try {
       await api.post(`/clientes/${modalCuentaCliente.id_cliente}/cuentas`, {
         id_tipo_moneda: Number(cuentaForm.id_tipo_moneda),
-        linea_credito: Number(cuentaForm.linea_credito || 0),
+        linea_credito: lineaCheck.valor,
       });
       setModalCuentaCliente(null);
       await cargarClientes();
@@ -200,6 +296,8 @@ export default function ClientesPage() {
         (err as { response?: { data?: { error?: string } } })?.response?.data
           ?.error || 'No se pudo abrir la cuenta.'
       );
+    } finally {
+      setSubmittingCuenta(false);
     }
   };
 
@@ -652,9 +750,10 @@ export default function ClientesPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg cursor-pointer"
+                  disabled={submittingCliente}
+                  className="px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg cursor-pointer"
                 >
-                  Guardar
+                  {submittingCliente ? 'Guardando...' : 'Guardar'}
                 </button>
               </div>
             </form>
@@ -731,9 +830,10 @@ export default function ClientesPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg cursor-pointer"
+                  disabled={submittingCuenta}
+                  className="px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg cursor-pointer"
                 >
-                  Abrir Cuenta
+                  {submittingCuenta ? 'Guardando...' : 'Abrir Cuenta'}
                 </button>
               </div>
             </form>

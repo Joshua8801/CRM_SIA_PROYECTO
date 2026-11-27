@@ -5,6 +5,7 @@ import {
   previsualizarConciliacion,
   registrarConciliacion,
 } from '../services/conciliaciones.service';
+import { parseIdOpcional, parseIdPositivo } from '../utils/validation';
 
 export async function getConciliaciones(
   req: AuthRequest,
@@ -12,9 +13,7 @@ export async function getConciliaciones(
   next: NextFunction
 ) {
   try {
-    const idCuenta = req.query.id_cuenta
-      ? Number(req.query.id_cuenta)
-      : undefined;
+    const idCuenta = parseIdOpcional(req.query.id_cuenta, 'ID de cuenta');
     const conciliaciones = await listarConciliaciones(idCuenta);
     res.json({ conciliaciones });
   } catch (error) {
@@ -28,16 +27,19 @@ export async function getPreviewConciliacion(
   next: NextFunction
 ) {
   try {
-    const idCuenta = Number(req.query.id_cuenta);
-    const fechaInicio = req.query.fecha_inicio as string;
-    const fechaFin = req.query.fecha_fin as string;
-
-    if (!idCuenta || !fechaInicio || !fechaFin) {
+    if (
+      req.query.id_cuenta === undefined ||
+      req.query.fecha_inicio === undefined ||
+      req.query.fecha_fin === undefined
+    ) {
       res.status(400).json({
         error: 'Debe indicar id_cuenta, fecha_inicio y fecha_fin.',
       });
       return;
     }
+    const idCuenta = parseIdPositivo(req.query.id_cuenta, 'ID de cuenta');
+    const fechaInicio = req.query.fecha_inicio as string;
+    const fechaFin = req.query.fecha_fin as string;
 
     const preview = await previsualizarConciliacion(
       idCuenta,
@@ -68,12 +70,16 @@ export async function postConciliacion(
 
     if (
       !id_cuenta ||
-      !fecha_inicio ||
-      !fecha_fin ||
+      fecha_inicio === undefined ||
+      fecha_fin === undefined ||
       saldo_inicial_manual === undefined ||
+      saldo_inicial_manual === null ||
       total_cargos_manual === undefined ||
+      total_cargos_manual === null ||
       total_abonos_manual === undefined ||
-      saldo_final_manual === undefined
+      total_abonos_manual === null ||
+      saldo_final_manual === undefined ||
+      saldo_final_manual === null
     ) {
       res.status(400).json({
         error: 'Todos los campos del período y cálculo manual son obligatorios.',
@@ -81,8 +87,9 @@ export async function postConciliacion(
       return;
     }
 
+    const idCuenta = parseIdPositivo(id_cuenta, 'ID de cuenta');
     const conciliacion = await registrarConciliacion(
-      req.body,
+      { ...req.body, id_cuenta: idCuenta },
       req.user!.id_usuario
     );
     res.status(201).json({ conciliacion });

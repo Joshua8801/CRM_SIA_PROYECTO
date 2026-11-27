@@ -4,6 +4,7 @@ import {
   actualizarEstadoAlerta,
   listarAlertas,
 } from '../services/alertas.service';
+import { parseIdPositivo } from '../utils/validation';
 
 export async function getAlertas(
   req: AuthRequest,
@@ -26,8 +27,8 @@ export async function patchEstadoAlerta(
   next: NextFunction
 ) {
   try {
-    const idAlerta = Number(req.params.id);
-    const { estado } = req.body;
+    const idAlerta = parseIdPositivo(req.params.id, 'ID de alerta');
+    const { estado } = req.body ?? {};
     if (!['REVISADA', 'RESUELTA'].includes(estado)) {
       res.status(400).json({ error: 'Estado inválido. Use REVISADA o RESUELTA.' });
       return;

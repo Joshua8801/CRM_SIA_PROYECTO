@@ -95,6 +95,7 @@ export interface CuentaCorriente {
   credito_disponible: string;
   excede_linea: boolean;
   estado: 'ACTIVA' | 'SUSPENDIDA' | 'CERRADA';
+  cliente_estado?: 'ACTIVO' | 'BLOQUEADO' | 'INACTIVO';
   fecha_apertura: string;
   cliente_nombre: string;
   numero_documento: string;
